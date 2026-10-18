@@ -65,13 +65,47 @@ pub enum Error {
     Start(String),
 
     #[error("There's no run {0}.")]
+    #[diagnostic(help(
+        "`marche list` lists the runs started from this directory, and `marche list --all` lists every run."
+    ))]
     NoRun(String),
+
+    #[error("There's no run with the ULID {0}.")]
+    #[diagnostic(help(
+        "`marche list` lists the runs started from this directory, and `marche list --all` lists every run."
+    ))]
+    NoUlid(String),
+
+    #[error("The ULID {ulid} matches more than one run: {runs}.")]
+    #[diagnostic(help("Give the run's full workflow ID."))]
+    Ambiguous { ulid: String, runs: String },
+
+    #[error("No run was started from this directory.")]
+    #[diagnostic(help(
+        "Start one with `marche run <file>`, or name a run: `marche list --all` lists every run."
+    ))]
+    NoRunHere,
+
+    #[error("Couldn't list runs: {0}")]
+    List(String),
+
+    #[error("Couldn't look up {run}: {message}")]
+    Lookup { run: String, message: String },
+
+    #[error(
+        "No worker is serving the task queue {queue}, so marche can't read the tasks of {run}."
+    )]
+    #[diagnostic(help("Start one with `marche worker`."))]
+    NoWorker { queue: String, run: String },
 
     #[error("Couldn't read the tasks of {run}: {message}")]
     #[diagnostic(help(
-        "marche show asks a worker for the run's tasks, so `marche worker` must be running."
+        "marche asks a worker for a run's tasks, so `marche worker` must be running."
     ))]
     Query { run: String, message: String },
+
+    #[error("Couldn't cancel {run}: {message}")]
+    Cancel { run: String, message: String },
 
     #[error("Lost track of {run}: {message}")]
     Wait { run: String, message: String },

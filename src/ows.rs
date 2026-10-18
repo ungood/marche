@@ -90,11 +90,11 @@ pub struct TaskRecord {
     pub reference: String,
     pub name: String,
     pub status: Status,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub output: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub error: Option<Error>,
     /// The path of the last attempt's standard output log, for shell steps.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub log: Option<String>,
 }

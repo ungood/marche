@@ -8,7 +8,6 @@ Feature: marche status
   worker for the tasks of a run that's still running, so a worker must be
   serving the run's task queue.
 
-  @wip
   Scenario: Status shows the tasks running now
     Given the file "nap.yaml":
       """yaml
@@ -20,11 +19,11 @@ Feature: marche status
       do:
         - prepare:
             set:
-              seconds: 30
+              seconds: 600
         - nap:
             run:
               shell:
-                command: sleep 30
+                command: sleep 600
       """
     And "nap.yaml" is running its nap task
     When I run "marche status $RUN"
@@ -40,7 +39,6 @@ Feature: marche status
       /do/0/prepare
       """
 
-  @wip
   Scenario: Without a run, status shows the latest run started from this directory
     Given the file "first.yaml":
       """yaml
@@ -80,7 +78,6 @@ Feature: marche status
       examples.first
       """
 
-  @wip
   Scenario: A run's ULID is enough
     Given the file "shape.yaml":
       """yaml
@@ -102,7 +99,6 @@ Feature: marche status
       $RUN completed
       """
 
-  @wip
   Scenario: --json prints the run's state as an object
     Given the file "shape.yaml":
       """yaml
@@ -124,7 +120,6 @@ Feature: marche status
       {"run": "$RUN", "definition": "examples.shape:0.1.0", "status": "completed", "running": []}
       """
 
-  @wip
   Scenario: Without a run, status needs a run started from this directory
     When I run "marche status"
     Then the command fails with exit code 2
@@ -134,7 +129,6 @@ Feature: marche status
       Start one with `marche run <file>`, or name a run: `marche list --all` lists every run.
       """
 
-  @wip
   Scenario: A run that doesn't exist is an error
     When I run "marche status examples.nap-01JAB3K4Z7Y8X9W0V1T2S3R4Q5"
     Then the command fails with exit code 2
@@ -144,7 +138,6 @@ Feature: marche status
       `marche list` lists the runs started from this directory, and `marche list --all` lists every run.
       """
 
-  @wip
   Scenario: A ULID that no run has is an error
     When I run "marche status 01JAB3K4Z7Y8X9W0V1T2S3R4Q6"
     Then the command fails with exit code 2
@@ -154,7 +147,6 @@ Feature: marche status
       `marche list` lists the runs started from this directory, and `marche list --all` lists every run.
       """
 
-  @wip
   Scenario: A ULID that more than one run has is ambiguous
     Given the run "tools.one-01JAB3K4Z7Y8X9W0V1T2S3R4Q7" has started on a task queue no worker serves
     And the run "tools.two-01JAB3K4Z7Y8X9W0V1T2S3R4Q7" has started on a task queue no worker serves
@@ -166,7 +158,6 @@ Feature: marche status
       Give the run's full workflow ID.
       """
 
-  @wip
   Scenario: Status needs a worker to read the tasks of a running run
     Given the run "tools.three-01JAB3K4Z7Y8X9W0V1T2S3R4Q8" has started on a task queue no worker serves
     When I run "marche status tools.three-01JAB3K4Z7Y8X9W0V1T2S3R4Q8"

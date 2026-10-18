@@ -5,7 +5,6 @@ Feature: marche list
   the runs started from every directory. `--json` prints
   `{"runs": [{"run", "definition", "status", "started", "directory"}]}`.
 
-  @wip
   Scenario: List prints a line for each run
     Given the file "shape.yaml":
       """yaml
@@ -27,7 +26,6 @@ Feature: marche list
       $RUN examples.shape:0.1.0 completed
       """
 
-  @wip
   Scenario: Runs are listed newest first
     Given the file "first.yaml":
       """yaml
@@ -66,7 +64,6 @@ Feature: marche list
       ]}
       """
 
-  @wip
   Scenario: List leaves out runs started from other directories
     Given the file "here.yaml":
       """yaml
@@ -105,7 +102,6 @@ Feature: marche list
       examples.elsewhere
       """
 
-  @wip
   Scenario: --all lists the runs started from every directory
     Given the file "here.yaml":
       """yaml
@@ -141,7 +137,6 @@ Feature: marche list
       examples.elsewhere:0.1.0 completed
       """
 
-  @wip
   Scenario: A directory without runs lists nothing
     When I run "marche list"
     Then the command succeeds

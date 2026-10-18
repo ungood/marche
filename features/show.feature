@@ -8,7 +8,6 @@ Feature: marche show
   "error", "log"}]}`. marche asks a worker for the tasks, even after the run
   has ended.
 
-  @wip
   Scenario: Show lists each task with its output and logs
     Given the file "hello.yaml":
       """yaml
@@ -44,7 +43,6 @@ Feature: marche show
       /runs/$RUN/do/1/say/1.stderr
       """
 
-  @wip
   Scenario: Show prints a faulted task's error
     Given the file "fail.yaml":
       """yaml
@@ -71,7 +69,6 @@ Feature: marche show
       no such branch
       """
 
-  @wip
   Scenario: --json prints every task as an object
     Given the file "hello.yaml":
       """yaml
@@ -102,7 +99,6 @@ Feature: marche show
       ]}
       """
 
-  @wip
   Scenario: Show accepts a run's ULID
     Given the file "shape.yaml":
       """yaml

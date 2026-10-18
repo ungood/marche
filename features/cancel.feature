@@ -7,7 +7,6 @@ Feature: marche cancel
   run started has exited. Cancelling a run that has already ended changes
   nothing. `--json` prints `{"run", "status"}`.
 
-  @wip
   Scenario: Cancel stops every process the run started
     Given the file "nap.yaml":
       """yaml
@@ -20,7 +19,7 @@ Feature: marche cancel
         - nap:
             run:
               shell:
-                command: sleep 60 & echo $! > nap.pid; wait
+                command: sleep 600 & echo $! > nap.pid; wait
       """
     And "nap.yaml" is running its nap task
     And the workflow has written the file "nap.pid"
@@ -32,7 +31,6 @@ Feature: marche cancel
       """
     And the process whose ID is in "nap.pid" has stopped
 
-  @wip
   Scenario: --json prints the run's final status
     Given the file "nap.yaml":
       """yaml
@@ -45,7 +43,7 @@ Feature: marche cancel
         - nap:
             run:
               shell:
-                command: sleep 60
+                command: sleep 600
       """
     And "nap.yaml" is running its nap task
     When I run "marche cancel $ULID --json"
@@ -55,7 +53,6 @@ Feature: marche cancel
       {"run": "$RUN", "status": "cancelled"}
       """
 
-  @wip
   Scenario: Cancelling a run that has ended changes nothing
     Given the file "shape.yaml":
       """yaml
@@ -77,7 +74,6 @@ Feature: marche cancel
       $RUN had already completed.
       """
 
-  @wip
   Scenario: Cancelling a run that doesn't exist is an error
     When I run "marche cancel examples.nap-01JAB3K4Z7Y8X9W0V1T2S3R4Q9"
     Then the command fails with exit code 2

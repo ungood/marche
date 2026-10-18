@@ -1,8 +1,11 @@
 //! One module per subcommand.
 
+pub mod cancel;
 pub mod guard;
+pub mod list;
 pub mod run;
 pub mod show;
+pub mod status;
 pub mod validate;
 pub mod worker;
 

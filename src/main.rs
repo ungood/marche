@@ -10,6 +10,7 @@ mod error;
 mod expr;
 mod interpreter;
 mod ows;
+mod runs;
 mod shell;
 mod spans;
 mod temporal;
@@ -35,8 +36,14 @@ struct Cli {
 enum Command {
     /// Start a run of a workflow definition, and wait for it unless --detach is given
     Run(commands::run::Args),
+    /// Show a run's state and the tasks running now
+    Status(commands::status::Args),
+    /// List recent runs started from this directory, newest first
+    List(commands::list::Args),
     /// Show a run's tasks in the order they started
     Show(commands::show::Args),
+    /// Cancel a run, and wait until every process it started has exited
+    Cancel(commands::cancel::Args),
     /// Check a workflow definition without running it
     Validate(commands::validate::Args),
     /// Run the interpreter and the shell activity until interrupted
@@ -62,7 +69,10 @@ async fn main() -> ExitCode {
     };
     let result = match cli.command {
         Command::Run(args) => commands::run::run(args, &cli.target, verbosity).await,
-        Command::Show(args) => commands::show::show(args, &cli.target).await,
+        Command::Status(args) => commands::status::status(args, &cli.target).await,
+        Command::List(args) => commands::list::list(args, &cli.target, verbosity).await,
+        Command::Show(args) => commands::show::show(args, &cli.target, verbosity).await,
+        Command::Cancel(args) => commands::cancel::cancel(args, &cli.target, verbosity).await,
         Command::Validate(args) => commands::validate::validate(args, verbosity),
         Command::Worker => commands::worker::worker(&cli.target, verbosity).await,
         Command::Guard(args) => commands::guard::guard(args).await,
