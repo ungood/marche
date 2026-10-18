@@ -28,12 +28,12 @@ fn temporal_config(world: &mut MarcheWorld, step: &Step) {
 }
 
 #[given(regex = r#"^a worker started with "(.+)"$"#)]
-fn worker_started_with(world: &mut MarcheWorld, command: String) {
+async fn worker_started_with(world: &mut MarcheWorld, command: String) {
     let words = shell_words::split(&command).expect("the command splits into words");
     let args = words
         .strip_prefix(&["marche".to_string(), "worker".to_string()])
         .expect("the command starts with marche worker");
-    world.services = Some(Services::start_with(args.to_vec()));
+    world.services = Some(Services::start_with(args.to_vec()).await);
 }
 
 #[when(regex = r#"^I run "(.+)"$"#)]
@@ -123,6 +123,25 @@ fn says(actual: &[u8], step: &Step, what: &str) {
 #[then("the output says:")]
 fn output_says(world: &mut MarcheWorld, step: &Step) {
     says(&world.last().stdout, step, "the output");
+}
+
+/// The version `git describe` gives this checkout, without the tag's `v`, or
+/// Cargo.toml's placeholder when there's no release tag to describe.
+#[then("the output is marche's version")]
+fn output_is_version(world: &mut MarcheWorld) {
+    let described = std::process::Command::new("git")
+        .args(["describe", "--tags", "--match", "v[0-9]*"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+    let version = described
+        .as_deref()
+        .and_then(|tag| tag.strip_prefix('v'))
+        .unwrap_or(env!("CARGO_PKG_VERSION"));
+    let output = String::from_utf8_lossy(&world.last().stdout);
+    assert_eq!(output.trim(), format!("marche {version}"));
 }
 
 #[then("the error says:")]

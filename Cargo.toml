@@ -1,6 +1,7 @@
 [package]
 name = "marche"
-version = "0.1.0"
+# The git tags hold the real version. See build.rs.
+version = "0.0.0-development"
 edition = "2024"
 rust-version = "1.88"
 description = "A durable workflow engine that runs Open Workflow Specification definitions on Temporal"

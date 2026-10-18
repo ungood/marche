@@ -25,7 +25,7 @@ async fn wait_until(limit: Duration, what: &str, mut done: impl AsyncFnMut() -> 
 }
 
 /// Waits for the run started by `the workflow is running its <task> task`.
-async fn wait_for_run(world: &mut MarcheWorld) {
+pub async fn wait_for_run(world: &mut MarcheWorld) {
     let pending = world.pending.take().expect("the workflow isn't running");
     let output = tokio::task::spawn_blocking(move || pending.wait_with_output())
         .await
@@ -51,7 +51,7 @@ async fn lose_worker(world: &mut MarcheWorld, attempts: u32) {
         let log = format!("{attempt}.stdout");
         let what = format!("attempt {attempt} didn't start");
         wait_until(PATIENCE, &what, async || find(&runs, &log)).await;
-        services.restart_worker();
+        services.restart_worker().await;
     }
     wait_for_run(world).await;
 }

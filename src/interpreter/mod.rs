@@ -184,7 +184,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
             workflow: json!({"id": id, "definition": definition}),
             runtime: json!({
                 "name": "marche",
-                "version": env!("CARGO_PKG_VERSION"),
+                "version": env!("MARCHE_VERSION"),
                 "metadata": {"directory": directory},
             }),
             definition,
