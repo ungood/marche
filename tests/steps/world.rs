@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
-use std::process::Output;
+use std::process::{Child, Output};
 
 use cucumber::World;
 use serde_json::Value;
 use tempfile::TempDir;
+
+use super::services::Services;
 
 #[derive(Debug, World)]
 #[world(init = Self::new)]
@@ -19,6 +21,10 @@ pub struct MarcheWorld {
     pub run: Option<Value>,
     /// `marche show --json` output for the same run.
     pub show: Option<Value>,
+    /// A server and worker of the scenario's own, for scenarios that kill the worker.
+    pub services: Option<Services>,
+    /// A `marche run --json` still in progress.
+    pub pending: Option<Child>,
 }
 
 impl MarcheWorld {
@@ -34,6 +40,8 @@ impl MarcheWorld {
             input: None,
             run: None,
             show: None,
+            services: None,
+            pending: None,
         }
     }
 
@@ -47,12 +55,23 @@ impl MarcheWorld {
         self.root.path().join("state")
     }
 
+    /// The address of the scenario's own server, or else the shared one.
+    pub fn address(&self) -> String {
+        match &self.services {
+            Some(services) => services.address.clone(),
+            None => super::services::address(),
+        }
+    }
+
     pub fn last(&self) -> &Output {
         self.last.as_ref().expect("no command has run")
     }
 
     pub fn write(&self, name: &str, content: &str) -> PathBuf {
         let path = self.work_dir().join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create test directory");
+        }
         std::fs::write(&path, content).expect("write test file");
         path
     }

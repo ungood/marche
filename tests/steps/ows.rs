@@ -5,22 +5,24 @@
 //! workflow and waits for it, and `marche show --json` lists its tasks in the
 //! order they started.
 
-use std::process::Command;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
 
 use cucumber::gherkin::{Scenario, Step};
 use cucumber::{given, then, when};
 use serde_json::Value;
 
-use super::services;
+use super::services::{self, Services};
 use super::world::{MarcheWorld, docstring, marche};
 
 /// Task types the interpreter supports. A conformance scenario runs only when
 /// every task in its definition is listed here, so each task type's work adds
 /// its name when it lands.
-const SUPPORTED: &[&str] = &[];
+const SUPPORTED: &[&str] = &["do", "set", "run: shell"];
 
+/// `do` comes last, because `for` tasks have a `do` too.
 const TASK_TYPES: &[&str] = &[
-    "call", "do", "emit", "for", "fork", "listen", "raise", "run", "set", "switch", "try", "wait",
+    "call", "emit", "for", "fork", "listen", "raise", "run", "set", "switch", "try", "wait", "do",
 ];
 
 /// Whether marche runs this scenario. Scenarios without a workflow definition
@@ -77,9 +79,8 @@ fn input(world: &mut MarcheWorld, step: &Step) {
     world.input = Some(yaml(step));
 }
 
-#[when("the workflow is executed")]
-fn execute(world: &mut MarcheWorld) {
-    let address = services::address();
+/// `marche run --json` for the scenario's definition and input.
+fn run_command(world: &MarcheWorld) -> Command {
     let path = world.write(
         "workflow.yaml",
         world.definition.as_deref().expect("no workflow definition"),
@@ -87,17 +88,70 @@ fn execute(world: &mut MarcheWorld) {
     let mut run = Command::new(marche());
     run.arg("run")
         .arg(&path)
-        .args(["--json", "--address", &address]);
+        .args(["--json", "--address", &world.address()])
+        .current_dir(world.work_dir());
     if let Some(input) = &world.input {
         run.args(["--input", &input.to_string()]);
     }
-    let result = json(run.current_dir(world.work_dir()));
+    run
+}
+
+/// Records a finished run, and its tasks from `marche show --json`.
+fn finish(world: &mut MarcheWorld, result: Value) {
     let id = result["run"]
         .as_str()
         .expect("marche run --json has a run ID");
-    let show = json(Command::new(marche()).args(["show", id, "--json", "--address", &address]));
+    let show =
+        json(Command::new(marche()).args(["show", id, "--json", "--address", &world.address()]));
     world.run = Some(result);
     world.show = Some(show);
+}
+
+#[when("the workflow is executed")]
+fn execute(world: &mut MarcheWorld) {
+    let result = json(&mut run_command(world));
+    finish(world, result);
+}
+
+#[given(regex = r"^the workflow is running its (\w+) task$")]
+fn running(world: &mut MarcheWorld, task: String) {
+    world.services = Some(Services::start());
+    let mut child = run_command(world)
+        .env(
+            "XDG_STATE_HOME",
+            &world.services.as_ref().expect("services").state,
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start marche run");
+    // marche run prints "started <reference>" as each task starts.
+    let mut lines = BufReader::new(child.stderr.take().expect("run stderr")).lines();
+    let suffix = format!("/{task}");
+    let started = lines
+        .by_ref()
+        .map_while(Result::ok)
+        .any(|line| line.starts_with("started ") && line.ends_with(&suffix));
+    assert!(started, "{task} didn't start");
+    std::thread::spawn(move || lines.for_each(drop));
+    world.pending = Some(child);
+}
+
+#[when("the worker is killed and started again")]
+fn restart_worker(world: &mut MarcheWorld) {
+    world
+        .services
+        .as_mut()
+        .expect("the workflow isn't running")
+        .restart_worker();
+    let output = world
+        .pending
+        .take()
+        .expect("the workflow isn't running")
+        .wait_with_output()
+        .expect("wait for marche run");
+    let result = serde_json::from_slice(&output.stdout).expect("marche run --json prints JSON");
+    finish(world, result);
 }
 
 /// Runs marche and parses its standard output, whatever the exit code, since a
@@ -131,7 +185,7 @@ fn assert_status(actual: &Value, expected: &str, what: &str) {
 
 /// Whether every key in `expected` appears in `actual` with a matching value.
 /// Runtimes may add detail, such as an error's `detail`.
-fn contains(actual: &Value, expected: &Value) -> bool {
+pub fn contains(actual: &Value, expected: &Value) -> bool {
     match (actual, expected) {
         (Value::Object(actual), Value::Object(expected)) => expected
             .iter()
