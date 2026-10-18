@@ -195,3 +195,63 @@ Feature: marche status
       """json
       {"run": "$RUN", "definition": "examples.courses:0.1.0", "status": "completed", "running": []}
       """
+
+  Scenario: Status fails at once when the run's worker has stopped
+    Given a worker started with "marche worker"
+    And the file "nap.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: nap
+        version: '0.1.0'
+      do:
+        - nap:
+            run:
+              shell:
+                command: sleep 600
+      """
+    And "nap.yaml" is running its nap task
+    And the worker has stopped
+    When I run "marche status $RUN"
+    Then the command fails with exit code 2
+    And the error says:
+      """
+      No worker is serving the task queue marche, so marche can't read the tasks of $RUN.
+      Start one with `marche worker`.
+      """
+
+  Scenario: A terminated run is reported as cancelled
+    Given the file "nap.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: nap
+        version: '0.1.0'
+      do:
+        - nap:
+            run:
+              shell:
+                command: sleep 600
+      """
+    And "nap.yaml" is running its nap task
+    And the run has been terminated
+    When I run "marche status $RUN --json"
+    Then the command succeeds
+    And the JSON output contains:
+      """json
+      {"run": "$RUN", "status": "cancelled", "running": []}
+      """
+
+  Scenario: A namespace that doesn't exist is an error
+    When I run "marche status examples.nap-01JAB3K4Z7Y8X9W0V1T2S3R4QC --namespace nope"
+    Then the command fails with exit code 2
+    And the error says:
+      """
+      Temporal has no namespace nope.
+      """
+    And the help says:
+      """
+      Create it with `temporal operator namespace create nope`, or choose another with --namespace or TEMPORAL_NAMESPACE.
+      """

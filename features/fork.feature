@@ -252,3 +252,31 @@ Feature: Fork
     And rice should complete
     And cook should complete
     And serve should run 0 times
+
+  Scenario: Cancelling a run cancels every branch
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: fork-cancel
+        version: '0.1.0'
+      do:
+        - cook:
+            fork:
+              branches:
+                - stir:
+                    run:
+                      shell:
+                        command: sleep 60
+                - simmer:
+                    run:
+                      shell:
+                        command: sleep 60
+      """
+    And the workflow is running its simmer task
+    When the workflow is cancelled
+    Then the workflow should cancel
+    And stir should cancel
+    And simmer should cancel
+    And cook should cancel

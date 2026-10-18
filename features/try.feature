@@ -243,3 +243,33 @@ Feature: Catching and retrying errors
       named.yaml can't run on marche yet.
       /do/0/poll uses catch.retry: patient, which marche doesn't support yet.
       """
+
+  Scenario: Cancelling a run during a retry's delay cancels the try task
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: try-cancel
+        version: '0.1.0'
+      do:
+        - guard:
+            try:
+              - attempt:
+                  run:
+                    shell:
+                      command: touch tried; exit 1
+            catch:
+              retry:
+                delay:
+                  minutes: 10
+                limit:
+                  attempt:
+                    count: 3
+      """
+    And the workflow is running its attempt task
+    And the workflow has written the file "tried"
+    When the workflow is cancelled
+    Then the workflow should cancel
+    And guard should cancel
+    And attempt should run 1 time

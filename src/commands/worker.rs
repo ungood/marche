@@ -25,8 +25,8 @@ pub async fn worker(args: Args, target: &Target, verbosity: Verbosity) -> Result
     let temporal = target.connect().await?;
     temporal.register_search_attributes().await?;
     let runtime = Runtime::from_current_tokio(Default::default())
-        .map_err(|error| Error::Worker(error.to_string()))?;
-    let marche = std::env::current_exe().map_err(|error| Error::Worker(error.to_string()))?;
+        .map_err(|error| Error::WorkerStart(error.to_string()))?;
+    let marche = std::env::current_exe().map_err(|error| Error::WorkerStart(error.to_string()))?;
     let options = WorkerOptions::new(TASK_QUEUE)
         .register_activities(ShellActivities {
             state_dir: state_dir(),
@@ -34,7 +34,7 @@ pub async fn worker(args: Args, target: &Target, verbosity: Verbosity) -> Result
             verbose: verbosity == Verbosity::Verbose,
         })
         .register_workflow::<Interpret>()
-        .map_err(|error| Error::Worker(error.to_string()))?
+        .map_err(|error| Error::WorkerStart(error.to_string()))?
         // Running steps are killed at once on shutdown, and Temporal reruns them
         // on the next worker.
         .graceful_shutdown_period(Duration::ZERO)
@@ -43,7 +43,7 @@ pub async fn worker(args: Args, target: &Target, verbosity: Verbosity) -> Result
         .max_heartbeat_throttle_interval(HEARTBEAT_INTERVAL)
         .build();
     let mut worker = Worker::new(&runtime, temporal.client, options)
-        .map_err(|error| Error::Worker(error.to_string()))?;
+        .map_err(|error| Error::WorkerStart(error.to_string()))?;
 
     let shutdown = worker.shutdown_handle();
     tokio::spawn(async move {
@@ -54,10 +54,12 @@ pub async fn worker(args: Args, target: &Target, verbosity: Verbosity) -> Result
         }
         shutdown();
     });
-    eprintln!(
-        "marche worker is running on the task queue {TASK_QUEUE} in the namespace {}.",
-        temporal.namespace
-    );
+    if verbosity != Verbosity::Quiet {
+        eprintln!(
+            "marche worker is running on the task queue {TASK_QUEUE} in the namespace {}.",
+            temporal.namespace
+        );
+    }
     worker
         .run()
         .await

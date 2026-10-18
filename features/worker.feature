@@ -2,8 +2,9 @@ Feature: marche worker
 
   `marche worker` connects to Temporal as `marche run` does, registers the
   search attributes marche sets on runs, and then runs the interpreter and the
-  shell activity on the task queue `marche` until it's interrupted. With `-v`,
-  it prints each shell step as it starts and finishes, after the run's ID.
+  shell activity on the task queue `marche` until it's interrupted. It says
+  when it's ready, unless `-q` is given. With `-v`, it prints each shell step as
+  it starts and finishes, after the run's ID.
 
   Scenario: -v prints each step the worker runs
     Given a worker started with "marche worker -v"
@@ -36,4 +37,13 @@ Feature: marche worker
     And the error says:
       """
       Couldn't connect to Temporal at 127.0.0.1:1
+      """
+
+  Scenario: -q prints nothing while the worker runs
+    Given a Temporal server with no worker
+    When I run "marche worker -q" for 3 seconds
+    Then the command is still running
+    And marche doesn't print:
+      """
+      marche worker is running
       """

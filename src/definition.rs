@@ -13,9 +13,6 @@ use crate::interpreter::duration;
 use crate::interpreter::schema::{self, Unusable};
 use crate::spans::Spans;
 
-/// The most schema errors to report at once.
-const MAX_ERRORS: usize = 10;
-
 static SCHEMA: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
     let schema: Value = serde_yaml_ng::from_str(include_str!("../vendor/ows/schema/workflow.yaml"))
         .expect("the vendored schema is YAML");
@@ -80,21 +77,24 @@ fn check(path: &str, text: &str) -> Result<Definition, Error> {
 
     let errors: Vec<(String, String)> = SCHEMA
         .iter_errors(&json)
-        .take(MAX_ERRORS)
         .map(|error| {
             let at = error.instance_path().to_string();
             let message = format!("{}: {error}", if at.is_empty() { "/" } else { &at });
             (at, message)
         })
         .collect();
+    let mut problems = unsupported(&json);
     if !errors.is_empty() {
+        // marche's own checks stand for the parts the schema accepts. Where
+        // the schema found a problem, they would only repeat it.
+        problems.retain(|(at, _)| !errors.iter().any(|(invalid, _)| within(at, invalid)));
+        let mut errors = errors;
+        errors.extend(problems);
         return Err(Error::Invalid {
             path: path.to_string(),
             problems: locate(path, text, errors),
         });
     }
-
-    let problems = unsupported(&json);
     if !problems.is_empty() {
         return Err(Error::Unsupported {
             path: path.to_string(),
@@ -112,6 +112,12 @@ fn check(path: &str, text: &str) -> Result<Definition, Error> {
         version: field("version"),
         json,
     })
+}
+
+/// Whether the JSON pointer `at` is `outer` or inside it.
+fn within(at: &str, outer: &str) -> bool {
+    at.strip_prefix(outer)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 fn syntax(path: &str, text: &str, error: serde_yaml_ng::Error) -> Error {
@@ -594,6 +600,59 @@ mod tests {
         };
         let offset = problems[0].span.offset();
         assert_eq!(text[..offset].matches('\n').count() + 1, 11);
+    }
+
+    #[test]
+    fn every_schema_problem_is_reported() {
+        let tasks: Vec<String> = (0..12)
+            .map(|index| format!("  - task{index}:\n      set: 5\n"))
+            .collect();
+        let text = format!(
+            "document:\n  dsl: '1.0.4'\n  namespace: test\n  name: many\n  version: '0.1.0'\ndo:\n{}",
+            tasks.concat()
+        );
+        let Err(Error::Invalid { problems, .. }) = check("many.yaml", &text) else {
+            panic!("the definition is valid");
+        };
+        for index in 0..12 {
+            let at = format!("/do/{index}");
+            assert!(
+                problems
+                    .iter()
+                    .any(|problem| problem.message.starts_with(&at)),
+                "no problem at {at}"
+            );
+        }
+    }
+
+    #[test]
+    fn marche_checks_the_parts_the_schema_accepts() {
+        let text = "document:\n  dsl: '1.0.4'\n  namespace: test\n  name: both\ndo:\n  - fetch:\n      call: http\n      with:\n        method: get\n        endpoint: https://example.com\n  - broken:\n      set: 5\n      metadata:\n        marche:\n          parallel: true\n";
+        let Err(Error::Invalid { problems, .. }) = check("both.yaml", text) else {
+            panic!("the definition is valid");
+        };
+        let messages: Vec<&str> = problems
+            .iter()
+            .map(|problem| problem.message.as_str())
+            .collect();
+        assert!(messages.contains(&"/document: \"version\" is a required property"));
+        assert!(
+            messages.contains(&"/do/0/fetch is a call task, which marche doesn't support yet.")
+        );
+        // The schema's problem with the broken task stands for marche's.
+        assert!(
+            !messages
+                .iter()
+                .any(|message| message.contains("metadata.marche"))
+        );
+    }
+
+    #[test]
+    fn pointers_are_within_their_parents() {
+        assert!(within("/do/0/fetch/call", "/do/0"));
+        assert!(within("/do/0", "/do/0"));
+        assert!(within("/do/0", ""));
+        assert!(!within("/do/10", "/do/1"));
     }
 
     #[test]

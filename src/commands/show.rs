@@ -1,11 +1,14 @@
 use std::process::ExitCode;
+use std::time::Duration;
 
 use console::style;
 use futures::StreamExt;
 use serde_json::json;
-use temporalio_client::errors::WorkflowInteractionError;
+use temporalio_client::errors::{WorkflowInteractionError, WorkflowQueryError};
+use temporalio_client::tonic::{Code, Status as RpcStatus};
 use temporalio_client::{
-    Client, WorkflowDescribeOptions, WorkflowExecutionInfo, WorkflowHandle, WorkflowQueryOptions,
+    Client, RpcOptions, WorkflowDescribeOptions, WorkflowExecutionInfo, WorkflowHandle,
+    WorkflowQueryOptions,
 };
 use temporalio_common::protos::temporal::api::history::v1::history_event::Attributes;
 
@@ -18,6 +21,10 @@ use crate::workflow::Interpret;
 
 /// The most characters of a task's output that a line shows, without -v.
 const OUTPUT_WIDTH: usize = 200;
+/// How long a worker has to answer a query for a run's tasks. A worker that
+/// has just stopped is still listed as polling, so its query would otherwise
+/// wait for Temporal's default deadline.
+const QUERY_DEADLINE: Duration = Duration::from_secs(10);
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
@@ -121,12 +128,18 @@ impl Chain {
             run: run.to_string(),
             message,
         };
-        let latest = handle
+        let description = handle
             .describe(WorkflowDescribeOptions::default())
             .await
-            .map_err(|error| failed(error.to_string()))?
-            .run_id()
-            .to_string();
+            .map_err(|error| failed(error.to_string()))?;
+        let latest = description.run_id().to_string();
+        let queried = |failure: QueryFailure| match failure {
+            QueryFailure::NoWorker => Error::NoWorker {
+                queue: description.task_queue().to_string(),
+                run: run.to_string(),
+            },
+            QueryFailure::Other(message) => failed(message),
+        };
         // Walk back from the latest run to the runs already known. Each run's
         // first event names the run it continued from.
         let mut newer = Vec::new();
@@ -140,14 +153,14 @@ impl Chain {
             newer.push(id);
         }
         for id in newer.into_iter().rev() {
-            let records = query(handle, &id).await.map_err(failed)?;
+            let records = query(handle, &id).await.map_err(queried)?;
             self.earlier.push((id, records));
         }
         let mut tasks = Vec::new();
         for (_, records) in &self.earlier {
             merge(&mut tasks, records.clone());
         }
-        merge(&mut tasks, query(handle, &latest).await.map_err(failed)?);
+        merge(&mut tasks, query(handle, &latest).await.map_err(queried)?);
         Ok(tasks)
     }
 }
@@ -185,14 +198,42 @@ async fn continued_from(
     })
 }
 
+/// Why a query for a run's tasks failed.
+enum QueryFailure {
+    /// No worker answered in time.
+    NoWorker,
+    Other(String),
+}
+
 async fn query(
     handle: &WorkflowHandle<Client, Interpret>,
     run_id: &str,
-) -> Result<Vec<TaskRecord>, String> {
-    run_handle(handle, run_id)
-        .query(Interpret::tasks, (), WorkflowQueryOptions::default())
-        .await
-        .map_err(|error| error.to_string())
+) -> Result<Vec<TaskRecord>, QueryFailure> {
+    let options = WorkflowQueryOptions::builder()
+        .rpc_options(RpcOptions::builder().timeout(QUERY_DEADLINE).build())
+        .build();
+    let handle = run_handle(handle, run_id);
+    let query = handle.query(Interpret::tasks, (), options);
+    // The deadline applies to each attempt, so the whole query has one too.
+    match tokio::time::timeout(QUERY_DEADLINE * 2, query).await {
+        Ok(Ok(records)) => Ok(records),
+        Ok(Err(WorkflowQueryError::Rpc(status))) if no_worker(&status) => {
+            Err(QueryFailure::NoWorker)
+        }
+        Ok(Err(error)) => Err(QueryFailure::Other(error.to_string())),
+        Err(_) => Err(QueryFailure::NoWorker),
+    }
+}
+
+/// Whether a query failed because no worker took it: it ran out of time, which
+/// the client or the server may report as the call being cancelled, or the
+/// server knows of no worker polling for it.
+fn no_worker(status: &RpcStatus) -> bool {
+    match status.code() {
+        Code::DeadlineExceeded | Code::Cancelled => true,
+        Code::FailedPrecondition => status.message().contains("no poller"),
+        _ => false,
+    }
 }
 
 /// Adds a run's records to those of the runs before it. A run continues as new

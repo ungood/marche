@@ -124,6 +124,15 @@ pub enum Error {
     #[error("The run was terminated.")]
     Terminated,
 
+    #[error("Couldn't register marche's search attributes: {0}")]
+    #[diagnostic(help(
+        "marche worker registers MarcheDefinition, MarcheDefinitionHash and MarcheDirectory as keyword search attributes when it starts. Register them with `temporal operator search-attribute create`, or run the worker as a user who may change the namespace."
+    ))]
+    Register(String),
+
+    #[error("Couldn't start the worker: {0}")]
+    WorkerStart(String),
+
     #[error("The worker stopped: {0}")]
     Worker(String),
 }

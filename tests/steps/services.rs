@@ -28,6 +28,13 @@ use super::world::marche;
 /// them while they start wait without holding up the scenarios beside them.
 static SHARED: tokio::sync::Mutex<Option<Services>> = tokio::sync::Mutex::const_new(None);
 
+/// The search attributes `marche worker` registers.
+const SEARCH_ATTRIBUTES: [&str; 3] = [
+    "MarcheDefinition",
+    "MarcheDefinitionHash",
+    "MarcheDirectory",
+];
+
 /// What `marche worker` prints once it's ready.
 const READY: &str = "marche worker is running";
 
@@ -92,6 +99,29 @@ impl Services {
         off_thread(move || Self::start_blocking(args)).await
     }
 
+    /// Starts a server of the scenario's own, with no worker. The server
+    /// registers marche's search attributes itself, as a worker would have.
+    pub async fn start_without_worker() -> Self {
+        off_thread(|| {
+            let state = state_dir();
+            let (address, server) = start_server(state.path(), &SEARCH_ATTRIBUTES);
+            Self {
+                address,
+                state,
+                log: Arc::default(),
+                args: Vec::new(),
+                server,
+                worker: Process(None),
+            }
+        })
+        .await
+    }
+
+    /// Kills the worker without warning, as a crash would.
+    pub fn stop_worker(&mut self) {
+        self.worker.stop();
+    }
+
     /// The worker's state directory, which holds run logs under `marche/runs`.
     pub fn state(&self) -> &Path {
         self.state.path()
@@ -108,11 +138,8 @@ impl Services {
     }
 
     fn start_blocking(args: Vec<String>) -> Self {
-        let state = tempfile::Builder::new()
-            .prefix("marche-test-")
-            .tempdir()
-            .expect("create worker state dir");
-        let (address, server) = start_server(state.path());
+        let state = state_dir();
+        let (address, server) = start_server(state.path(), &[]);
         let log = Arc::default();
         let worker = start_worker(&address, state.path(), &args, &log);
         Self {
@@ -132,6 +159,14 @@ impl Drop for Services {
         self.worker.stop();
         self.server.stop();
     }
+}
+
+/// A new directory for a worker's state.
+fn state_dir() -> TempDir {
+    tempfile::Builder::new()
+        .prefix("marche-test-")
+        .tempdir()
+        .expect("create worker state dir")
 }
 
 /// Runs blocking work on a thread of its own, and passes on its panic.
@@ -196,7 +231,7 @@ impl Drop for Process {
 /// serving. A port is free only until a server binds it, so another server
 /// can take it first. This one then exits, or else the server on the port
 /// lacks the namespace this one creates, and it starts again on another port.
-fn start_server(state: &Path) -> (String, Process) {
+fn start_server(state: &Path, search_attributes: &[&str]) -> (String, Process) {
     static STARTED: AtomicUsize = AtomicUsize::new(0);
     for _ in 0..SERVER_ATTEMPTS {
         let port = free_port();
@@ -206,15 +241,19 @@ fn start_server(state: &Path) -> (String, Process) {
             std::process::id(),
             STARTED.fetch_add(1, Ordering::Relaxed)
         );
-        let mut server = Process::spawn(
-            watched("temporal")
-                .args(["server", "start-dev", "--headless", "--log-level", "error"])
-                .args(["--ip", "127.0.0.1", "--port", &port.to_string()])
-                .args(["--ui-port", &free_port().to_string()])
-                .args(["--namespace", &marker])
-                .env("MARCHE_TEST_CLEANUP", state)
-                .stdout(Stdio::null()),
-        );
+        let mut server =
+            Process::spawn(
+                watched("temporal")
+                    .args(["server", "start-dev", "--headless", "--log-level", "error"])
+                    .args(["--ip", "127.0.0.1", "--port", &port.to_string()])
+                    .args(["--ui-port", &free_port().to_string()])
+                    .args(["--namespace", &marker])
+                    .args(search_attributes.iter().flat_map(|name| {
+                        ["--search-attribute".to_string(), format!("{name}=Keyword")]
+                    }))
+                    .env("MARCHE_TEST_CLEANUP", state)
+                    .stdout(Stdio::null()),
+            );
         if serving(&mut server, &address, &marker) {
             return (address, server);
         }

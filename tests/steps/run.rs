@@ -6,10 +6,10 @@ use serde_json::Value;
 
 use super::ows::contains;
 use super::services::Services;
-use super::world::{MarcheWorld, docstring, marche, plain};
+use super::world::{MarcheWorld, docstring, marche, output_of, output_within, plain};
 
 /// Subcommands that talk to Temporal, so `I run` points them at the test server.
-const TEMPORAL_COMMANDS: &[&str] = &["run", "show", "status", "list", "cancel"];
+const TEMPORAL_COMMANDS: &[&str] = &["run", "show", "status", "list", "cancel", "worker"];
 
 #[given(regex = r#"^the file "([^"]+)":$"#)]
 fn file(world: &mut MarcheWorld, path: String, step: &Step) {
@@ -36,9 +36,39 @@ async fn worker_started_with(world: &mut MarcheWorld, command: String) {
     world.services = Some(Services::start_with(args.to_vec()).await);
 }
 
+#[given("a Temporal server with no worker")]
+async fn server_without_worker(world: &mut MarcheWorld) {
+    world.services = Some(Services::start_without_worker().await);
+}
+
+#[given("the worker has stopped")]
+fn worker_stopped(world: &mut MarcheWorld) {
+    world
+        .services
+        .as_mut()
+        .expect("the scenario has no worker of its own")
+        .stop_worker();
+}
+
 #[when(regex = r#"^I run "(.+)"$"#)]
 async fn i_run(world: &mut MarcheWorld, command: String) {
-    let words = shell_words::split(&world.expand(&command)).expect("the command splits into words");
+    let mut run = command_for(world, &command).await;
+    world.last = Some(output_of(&mut run).await);
+}
+
+/// Runs a command that may not end by itself, and stops it with SIGTERM if
+/// it's still running after that many seconds.
+#[when(regex = r#"^I run "(.+)" for (\d+) seconds?$"#)]
+async fn i_run_for(world: &mut MarcheWorld, command: String, seconds: u64) {
+    let mut run = command_for(world, &command).await;
+    let (output, stopped) = output_within(&mut run, Duration::from_secs(seconds)).await;
+    world.last = Some(output);
+    world.still_running = stopped;
+}
+
+/// marche with the scenario's environment, ready to run in its directory.
+async fn command_for(world: &MarcheWorld, command: &str) -> tokio::process::Command {
+    let words = shell_words::split(&world.expand(command)).expect("the command splits into words");
     let (program, args) = words.split_first().expect("the command isn't empty");
     assert_eq!(program, "marche", "commands start with marche");
     let mut run = tokio::process::Command::new(marche());
@@ -58,7 +88,7 @@ async fn i_run(world: &mut MarcheWorld, command: String) {
         run.env("TEMPORAL_ADDRESS", world.address().await);
     }
     run.envs(world.env.iter().map(|(name, value)| (name, value)));
-    world.last = Some(run.output().await.expect("run marche"));
+    run
 }
 
 fn describe(world: &MarcheWorld) -> String {
@@ -78,6 +108,11 @@ fn succeeds(world: &mut MarcheWorld) {
         "marche failed\n{}",
         describe(world)
     );
+}
+
+#[then("the command is still running")]
+fn still_running(world: &mut MarcheWorld) {
+    assert!(world.still_running, "marche had ended\n{}", describe(world));
 }
 
 #[then("the command fails")]

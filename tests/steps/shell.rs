@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::process::Command;
 
 use super::ows::{finish, task, tasks, yaml};
-use super::world::MarcheWorld;
+use super::world::{COMMAND_PATIENCE, MarcheWorld, marche, output_of};
 
 /// How long a step has to do what a scenario waits for.
 pub const PATIENCE: Duration = Duration::from_secs(60);
@@ -29,10 +29,9 @@ pub async fn wait_until(limit: Duration, what: &str, mut done: impl AsyncFnMut()
 /// and records it as the scenario's last command.
 pub async fn wait_for_run(world: &mut MarcheWorld) {
     let pending = world.pending.take().expect("the workflow isn't running");
-    let mut output = pending
-        .child
-        .wait_with_output()
+    let mut output = tokio::time::timeout(COMMAND_PATIENCE, pending.child.wait_with_output())
         .await
+        .unwrap_or_else(|_| panic!("marche run didn't end within {COMMAND_PATIENCE:?}"))
         .expect("wait for marche run");
     output.stderr = pending
         .stderr
@@ -102,9 +101,29 @@ async fn cancel(world: &mut MarcheWorld) {
     let address = world.address().await;
     let id = world.run_id.clone().expect("the workflow isn't running");
     let cancelled = Instant::now();
-    temporal(&address, &["workflow", "cancel", "--workflow-id", &id]).await;
+    let output = output_of(
+        Command::new(marche())
+            .args(["cancel", &id, "--address", &address])
+            .env("NO_COLOR", "1"),
+    )
+    .await;
+    assert!(
+        output.status.success(),
+        "marche cancel failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     wait_for_run(world).await;
     world.took = Some(cancelled.elapsed());
+}
+
+/// Terminating skips the run's cleanup, as `temporal workflow terminate` or
+/// Temporal's Web UI can.
+#[when("the workflow is terminated")]
+async fn terminate(world: &mut MarcheWorld) {
+    let address = world.address().await;
+    let id = world.run_id.clone().expect("the workflow isn't running");
+    temporal(&address, &["workflow", "terminate", "--workflow-id", &id]).await;
+    wait_for_run(world).await;
 }
 
 #[then(regex = r"^the run should end within (\d+) seconds$")]

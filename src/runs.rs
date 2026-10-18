@@ -14,7 +14,7 @@ use console::Style;
 use futures::StreamExt;
 use jiff::Timestamp;
 use serde::{Serialize, Serializer};
-use temporalio_client::errors::WorkflowInteractionError;
+use temporalio_client::errors::{ClientError, WorkflowInteractionError};
 use temporalio_client::tonic::Request;
 use temporalio_client::{
     Client, WorkflowDescribeOptions, WorkflowExecution, WorkflowExecutionStatus, WorkflowHandle,
@@ -26,13 +26,15 @@ use temporalio_common::protos::temporal::api::workflowservice::v1::DescribeTaskQ
 use ulid::Ulid;
 
 use crate::error::Error;
-use crate::temporal::{DEFINITION, DIRECTORY, Temporal};
+use crate::temporal::{self, DEFINITION, DIRECTORY, Temporal};
 use crate::workflow::Interpret;
 
 const WORKFLOW_TYPE: &str = "marche.interpret";
 /// How long before its ULID's time a run may have started, for a server whose
 /// clock disagrees with the machine that started the run.
 const CLOCK_SKEW: Duration = Duration::from_secs(60 * 60);
+/// How recently a worker must have polled to count as serving a task queue.
+const LIVE_POLL: Duration = Duration::from_secs(2 * 60);
 
 /// A run, as `marche status` and `marche list` describe it.
 #[derive(Debug, Clone, Serialize)]
@@ -158,6 +160,11 @@ pub async fn describe(temporal: &Temporal, id: &str) -> Result<Run, Error> {
         .describe(WorkflowDescribeOptions::default())
         .await
         .map_err(|error| match error {
+            WorkflowInteractionError::NotFound(status) | WorkflowInteractionError::Rpc(status)
+                if temporal::is_missing_namespace(&status) =>
+            {
+                Error::NoNamespace(temporal.namespace.clone())
+            }
             WorkflowInteractionError::NotFound(_) => Error::NoRun(id.to_string()),
             other => Error::Lookup {
                 run: id.to_string(),
@@ -219,6 +226,11 @@ async fn executions(temporal: &Temporal, query: &str) -> Result<Vec<WorkflowExec
     let mut executions = Vec::new();
     while let Some(execution) = stream.next().await {
         executions.push(execution.map_err(|error| {
+            if let ClientError::Rpc(status) = &error
+                && temporal::is_missing_namespace(status)
+            {
+                return Error::NoNamespace(temporal.namespace.clone());
+            }
             let message = error.to_string();
             match [DEFINITION.name(), DIRECTORY.name()]
                 .into_iter()
@@ -232,29 +244,78 @@ async fn executions(temporal: &Temporal, query: &str) -> Result<Vec<WorkflowExec
     Ok(executions)
 }
 
-/// Fails unless a worker is polling the run's task queue, since only a worker
+/// Fails unless a worker is serving the run's task queue, since only a worker
 /// can answer a query for the run's tasks. Without one, a query would wait
-/// for its timeout.
+/// for its deadline.
 pub async fn require_worker(temporal: &Temporal, run: &Run) -> Result<(), Error> {
+    match worker_serves(temporal, &run.task_queue).await {
+        Some(false) => Err(Error::NoWorker {
+            queue: run.task_queue.clone(),
+            run: run.run.clone(),
+        }),
+        // If the server can't say, the query will.
+        _ => Ok(()),
+    }
+}
+
+/// Whether a worker is serving the task queue now, or `None` when the server
+/// can't say. Temporal lists a worker that has stopped for minutes after its
+/// last poll, so only workers that have polled within `LIVE_POLL` count. An
+/// idle worker's long poll lasts a minute, so that's its usual age.
+pub async fn worker_serves(temporal: &Temporal, queue: &str) -> Option<bool> {
     let mut service = temporal.client.connection().workflow_service();
     let response = service
         .describe_task_queue(Request::new(DescribeTaskQueueRequest {
             namespace: temporal.namespace.clone(),
             task_queue: Some(TaskQueue {
-                name: run.task_queue.clone(),
+                name: queue.to_string(),
                 kind: TaskQueueKind::Normal as i32,
                 ..Default::default()
             }),
             task_queue_type: TaskQueueType::Workflow as i32,
             ..Default::default()
         }))
-        .await;
-    match response {
-        Ok(response) if response.get_ref().pollers.is_empty() => Err(Error::NoWorker {
-            queue: run.task_queue.clone(),
-            run: run.run.clone(),
-        }),
-        // If the server can't say, the query will.
-        _ => Ok(()),
+        .await
+        .ok()?;
+    let now = SystemTime::now();
+    let polled = response.get_ref().pollers.iter().map(|poller| {
+        poller
+            .last_access_time
+            .as_ref()
+            .map(|time| (time.seconds, time.nanos))
+    });
+    Some(any_live(polled, now))
+}
+
+/// Whether any of these last poll times, as seconds and nanoseconds since
+/// the Unix epoch, is recent enough to count as a live worker.
+fn any_live(polled: impl IntoIterator<Item = Option<(i64, i32)>>, now: SystemTime) -> bool {
+    polled.into_iter().flatten().any(|(seconds, nanos)| {
+        let Ok(seconds) = u64::try_from(seconds) else {
+            return false;
+        };
+        let time = SystemTime::UNIX_EPOCH
+            + Duration::from_secs(seconds)
+            + Duration::from_nanos(u64::try_from(nanos).unwrap_or(0));
+        // A poll time ahead of this machine's clock counts as now.
+        now.duration_since(time).unwrap_or_default() <= LIVE_POLL
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_recent_pollers_are_live() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let ago = |seconds: i64| Some((1_000_000 - seconds, 0));
+        assert!(any_live([ago(65)], now));
+        assert!(any_live([ago(600), ago(5)], now));
+        assert!(!any_live([ago(600)], now));
+        assert!(!any_live([None], now));
+        assert!(!any_live([], now));
+        // A server clock a little ahead of this machine's.
+        assert!(any_live([ago(-3)], now));
     }
 }
