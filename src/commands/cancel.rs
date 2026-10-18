@@ -36,7 +36,12 @@ pub async fn cancel(args: Args, target: &Target, verbosity: Verbosity) -> Result
         Ok(ExitCode::SUCCESS)
     };
     if run.status != "running" {
-        return report(run.status, format!("{id} had already {}.", run.status));
+        let ended = if run.status == "cancelled" {
+            "been cancelled"
+        } else {
+            run.status
+        };
+        return report(run.status, format!("{id} had already {ended}."));
     }
 
     let handle = runs::handle(&temporal, &id);

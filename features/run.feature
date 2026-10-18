@@ -615,7 +615,6 @@ Feature: marche run
       faulted /do/0/cook
       """
 
-  @wip
   Scenario: --json prints a terminated run as cancelled
     Given a workflow with definition:
       """yaml

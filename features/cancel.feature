@@ -89,7 +89,6 @@ Feature: marche cancel
       There's no run examples.nap-01JAB3K4Z7Y8X9W0V1T2S3R4Q9.
       """
 
-  @wip
   Scenario: Cancelling a run that has been terminated changes nothing
     Given the file "nap.yaml":
       """yaml

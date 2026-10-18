@@ -129,7 +129,11 @@ pub async fn run(args: Args, target: &Target, verbosity: Verbosity) -> Result<Ex
         Ok(output) => Ok(output),
         Err(WorkflowGetResultError::Failed(failure)) => Err(Some(fault(*failure))),
         Err(WorkflowGetResultError::Cancelled { .. }) => Err(None),
-        Err(WorkflowGetResultError::Terminated { .. }) => return Err(Error::Terminated),
+        // A terminated run is reported as cancelled, with its own message.
+        Err(WorkflowGetResultError::Terminated { .. }) if !args.json => {
+            return Err(Error::Terminated);
+        }
+        Err(WorkflowGetResultError::Terminated { .. }) => Err(None),
         Err(other) => {
             return Err(Error::Wait {
                 run: id,
