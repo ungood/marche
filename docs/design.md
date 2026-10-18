@@ -98,7 +98,7 @@ The interpreter follows the OWS 1.0.x DSL and its reference. This section record
 | `wait` | Yes | A Temporal timer. Both duration forms are accepted. |
 | `run: shell` | Yes | See [Shell steps](#shell-steps). |
 | `for` | Yes | Sequential by default, or parallel with the [extension](#extension-parallel-for). `in` must give an array. `while` is checked before each iteration, with the item and index bound, on the data the iteration would get. Every iteration's tasks have the same references, so task records list them once per iteration. |
-| `fork` | Yes | Concurrent branches, with or without `compete`. |
+| `fork` | Yes | Concurrent branches, with or without `compete`. A branch skipped by its `if` keeps its place in the output with its input, as a skipped task's output is its input, but never wins a compete. When every branch is skipped, the fork's output is its input. A branch's `then: end` ends the workflow once the fork has finished, and its other `then` values are ignored. |
 | `listen` | M2 | With `marche signal`, delivering CloudEvents as Temporal signals. |
 | `emit` | Later | |
 | `call` | Later | `http`, `grpc`, `openapi`, `asyncapi`, `a2a` and `mcp`. |

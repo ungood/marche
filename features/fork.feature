@@ -124,7 +124,6 @@ Feature: Fork
     And slow should cancel
     And the process whose ID is in "slow.pid" has stopped
 
-  @wip
   Scenario: A skipped branch keeps its place with the fork's input
     Given a workflow with definition:
       """yaml
@@ -157,7 +156,6 @@ Feature: Fork
       """
     And salt should run 0 times
 
-  @wip
   Scenario: With compete, a skipped branch never wins
     Given a workflow with definition:
       """yaml
@@ -188,7 +186,6 @@ Feature: Fork
     And runner should complete
     And shortcut should run 0 times
 
-  @wip
   Scenario: With compete, a fork whose branches are all skipped passes its input on
     Given a workflow with definition:
       """yaml
@@ -222,7 +219,6 @@ Feature: Fork
       """
     And race should complete
 
-  @wip
   Scenario: A branch's then end ends the workflow once the fork has finished
     Given a workflow with definition:
       """yaml

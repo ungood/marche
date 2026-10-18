@@ -122,6 +122,16 @@ pub struct Done {
     pub end: bool,
 }
 
+/// What [`Interpreter::run_task`] gives for a task that didn't halt: its
+/// output, where the run goes next, and whether its `if` skipped it, in which
+/// case the output is its input.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ran {
+    pub output: Value,
+    pub flow: Flow,
+    pub skipped: bool,
+}
+
 /// What a task type's code gets: the task and its transformed input.
 #[allow(dead_code)]
 pub struct Task<'a> {
@@ -431,7 +441,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
                 if result == Err(Halt::ContinueAsNew) {
                     self.suspend(Frame::Within { index });
                 }
-                let (output, flow) = result?;
+                let Ran { output, flow, .. } = result?;
                 current = output;
                 match flow {
                     Flow::Continue => index += 1,
@@ -474,7 +484,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
         input: Value,
         token: &Token,
         variables: &[(String, Value)],
-    ) -> Result<(Value, Flow), Halt> {
+    ) -> Result<Ran, Halt> {
         // A resumed task carries on where it stopped, without checking `if` or
         // transforming its input again.
         let (input, transformed, started_at) =
@@ -496,13 +506,19 @@ impl<'h, H: Host> Interpreter<'h, H> {
         });
         if let Some(condition) = definition.get("if").filter(|_| transformed.is_none()) {
             match expr::evaluate_field(condition, &input, &scope) {
-                Ok(value) if !expr::truthy(&value) => return Ok((input, Flow::Continue)),
+                Ok(value) if !expr::truthy(&value) => {
+                    return Ok(Ran {
+                        output: input,
+                        flow: Flow::Continue,
+                        skipped: true,
+                    });
+                }
                 Ok(_) => {}
                 Err(error) => {
-                    let result = Err(Halt::Fault(error.at(reference)));
+                    let halt = Halt::Fault(error.at(reference));
                     let record = self.host.task_started(reference, name);
-                    self.host.task_finished(record, &result);
-                    return result.map(|output| (output, Flow::Continue));
+                    self.host.task_finished(record, &Err(halt.clone()));
+                    return Err(halt);
                 }
             }
         }
@@ -524,7 +540,12 @@ impl<'h, H: Host> Interpreter<'h, H> {
                 .map_err(Clone::clone);
             self.host.task_finished(record, &output);
         }
-        result
+        let (output, flow) = result?;
+        Ok(Ran {
+            output,
+            flow,
+            skipped: false,
+        })
     }
 
     async fn execute(
