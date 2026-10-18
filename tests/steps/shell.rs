@@ -113,8 +113,21 @@ async fn cancel(world: &mut MarcheWorld) {
     })
     .await;
     let id = id.expect("the workflow's ID");
+    let cancelled = Instant::now();
     temporal(&address, &["workflow", "cancel", "--workflow-id", &id]).await;
     wait_for_run(world).await;
+    world.took = Some(cancelled.elapsed());
+}
+
+#[then(regex = r"^the run should end within (\d+) seconds$")]
+fn ends_within(world: &mut MarcheWorld, seconds: u64) {
+    let took = world
+        .took
+        .expect("the workflow wasn't executed or cancelled");
+    assert!(
+        took <= Duration::from_secs(seconds),
+        "the run took {took:?}"
+    );
 }
 
 #[then(regex = r#"^the process whose ID is in "([^"]+)" has stopped$"#)]

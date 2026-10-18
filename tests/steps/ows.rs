@@ -120,7 +120,9 @@ pub fn finish(world: &mut MarcheWorld, result: Value) {
 
 #[when("the workflow is executed")]
 fn execute(world: &mut MarcheWorld) {
+    let started = std::time::Instant::now();
     let result = json(&mut run_command(world));
+    world.took = Some(started.elapsed());
     finish(world, result);
 }
 

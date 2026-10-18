@@ -20,7 +20,9 @@ use crate::ows;
 const CAPTURE_LIMIT: usize = 256 * 1024;
 /// How much of standard error a failed step's error detail quotes.
 const DETAIL_LIMIT: usize = 2 * 1024;
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
+/// How often a running step heartbeats. The worker sends heartbeats at most
+/// this far apart, and a step learns it was cancelled from the reply.
+pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
 /// How long a cancelled step has between SIGTERM and SIGKILL.
 pub const TERMINATION_GRACE: Duration = Duration::from_secs(10);
 /// How long a cancelled step's guard has to stop it, beyond the grace period,
@@ -225,7 +227,20 @@ async fn run_step(
             }
             () = ctx.cancelled() => {
                 drop(lifeline_held);
-                let _ = tokio::time::timeout(TERMINATION_GRACE + GUARD_MARGIN, finished).await;
+                // The guard may take its whole grace period to stop the step.
+                // Heartbeats go on meanwhile, or Temporal would time the step
+                // out and report it lost rather than cancelled.
+                let stopping = tokio::time::sleep(TERMINATION_GRACE + GUARD_MARGIN);
+                tokio::pin!(stopping);
+                loop {
+                    tokio::select! {
+                        _ = &mut finished => break,
+                        () = &mut stopping => break,
+                        _ = heartbeat.tick() => {
+                            let _ = ctx.record_heartbeat(()).await;
+                        }
+                    }
+                }
                 return Err(ActivityError::cancelled());
             }
             _ = heartbeat.tick() => {

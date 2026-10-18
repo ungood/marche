@@ -45,6 +45,7 @@ Outcome:
 - `the error points at line <n> of "<file>"` checks that one of the error's snippets shows that line.
 - `the worker prints:` matches what the scenario's own worker has printed.
 - `the JSON output contains:` with a JSON doc string. Standard output must be JSON with every field given. An array matches an array of the same length whose items each contain the expected item.
+- `the run should end within <n> seconds` checks how long `the workflow is executed` took, or after `the workflow is cancelled`, how long the run took to stop once cancelled.
 - `the process whose ID is in "<path>" has stopped` reads a process ID from a file in the scenario's directory and checks that the process has exited.
 - `<task> should have a standard output log of <n> bytes` checks the size of the log `marche show` gives for the task.
 - `each run of <task> has a standard output log of its own, saying:` with a YAML list as a doc string. Each run of the task, in the order they started, must have a log path of its own, and its log must hold the item, without a trailing newline.

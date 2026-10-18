@@ -144,7 +144,7 @@ The spec leaves some of `catch` to runtimes, and marche does the following:
 - **Limits:** `limit.attempt.count` counts every attempt, including the first. `limit.duration` stops retrying when the next attempt would start after that long since the first one started. `limit.attempt.duration` isn't supported yet, and neither are retry policies named from `use.retries`.
 - **Results:** a caught error runs `catch.do` with the `try` task's input, and its output is the task's output. Without `catch.do`, the task's output is its input. When a retry policy runs out, `catch.do` handles the last error, and without `catch.do` the task faults with it, so a polling loop such as the gate example doesn't carry on as if it had succeeded.
 
-Infrastructure failure is a separate layer that authors don't see. If a worker dies or a heartbeat times out, Temporal runs the step again, for up to three attempts in all. A step whose third attempt is lost too faults with a `runtime` error titled `Step lost`, whose detail says why.
+Infrastructure failure is a separate layer that authors don't see. If a worker dies or a heartbeat times out, Temporal runs the step again, for up to three attempts in all. A step whose third attempt is lost too faults with a `runtime` error titled `Step lost`, whose detail says why and how many attempts it lost.
 
 ### Flow and cancellation
 
@@ -157,7 +157,7 @@ marche follows the statechart rule: leaving a `do`, `fork` or `try` scope cancel
 
 Among concurrent branches, the first to fault or complete is the first whose result the interpreter sees, in the order Temporal delivers them, so it's the same on replay. Cancelled branches and the tasks they were running are recorded as `cancelled`.
 
-A cancelled shell step learns of the cancellation through its next heartbeat. The activity closes the pipe to the step's guard (see [Shell steps](#shell-steps)), and the guard sends SIGTERM to the step's process group, waits up to ten seconds for every process in it to exit, and then sends SIGKILL to what's left. The activity confirms the cancellation once the guard has exited. The interpreter waits for activities to confirm they've stopped before the scope finishes, so nothing a cancelled run started is still running when `marche cancel` returns.
+A cancelled shell step learns of the cancellation through its next heartbeat. Steps heartbeat every second, and the worker sends their heartbeats to Temporal at most a second apart rather than holding them back for most of the heartbeat timeout, so a step learns it was cancelled within about two seconds. The activity closes the pipe to the step's guard (see [Shell steps](#shell-steps)), and the guard sends SIGTERM to the step's process group, waits up to ten seconds for every process in it to exit, and then sends SIGKILL to what's left. The activity keeps heartbeating while the guard stops the step, so a step that takes the whole grace period to stop is reported as cancelled rather than lost, and it confirms the cancellation once the guard has exited, or after fifteen seconds if something the step started still holds its output open. The interpreter waits for activities to confirm they've stopped before the scope finishes, so nothing a cancelled run started is still running when `marche cancel` returns.
 
 ### Shell steps
 

@@ -309,5 +309,27 @@ Feature: Shell steps
     And the workflow has written the file "simmer.pid"
     When the workflow is cancelled
     Then the workflow should cancel
+    And the run should end within 8 seconds
+    And simmer should cancel
+    And the process whose ID is in "simmer.pid" has stopped
+
+  Scenario: A step that ignores SIGTERM is killed, and still reported as cancelled
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: cancel-stubborn
+        version: '0.1.0'
+      do:
+        - simmer:
+            run:
+              shell:
+                command: trap '' TERM; sleep 300 & echo $! > simmer.tmp && mv simmer.tmp simmer.pid; wait
+      """
+    And the workflow is running its simmer task
+    And the workflow has written the file "simmer.pid"
+    When the workflow is cancelled
+    Then the workflow should cancel
     And simmer should cancel
     And the process whose ID is in "simmer.pid" has stopped

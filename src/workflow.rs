@@ -9,7 +9,7 @@ use futures::future::LocalBoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use temporalio_common::RetryPolicy;
-use temporalio_common::error::IncomingError;
+use temporalio_common::error::{IncomingError, RetryState};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityCancellationType, ActivityExecutionError, ActivityOptions, ApplicationFailure,
@@ -250,10 +250,19 @@ fn shell_error(error: &ActivityExecutionError) -> ows::Error {
         }
         cause = incoming.cause();
     }
-    ows::Error::runtime(
-        "Step lost",
-        format!(
-            "The step stopped {SHELL_ATTEMPTS} times without finishing, because its worker died or stopped responding: {error}"
+    let retry_state = match error {
+        ActivityExecutionError::Failed(failure) => failure.retry_state(),
+        _ => RetryState::Unspecified,
+    };
+    let lost = match retry_state {
+        RetryState::MaximumAttemptsReached => format!(
+            "The step's worker died or stopped responding during each of its {SHELL_ATTEMPTS} attempts"
         ),
-    )
+        RetryState::CancelRequested => {
+            "The step's worker died or stopped responding while the step was being cancelled"
+                .to_string()
+        }
+        _ => "The step's worker died or stopped responding".to_string(),
+    };
+    ows::Error::runtime("Step lost", format!("{lost}: {error}"))
 }
