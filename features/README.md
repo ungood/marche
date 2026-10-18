@@ -20,12 +20,14 @@ A scenario that kills the worker gets a server and worker of its own, so it can'
 Setup:
 
 - `the file "<path>":` with the content as a doc string, written in the scenario's directory.
+- `the workflow has written the file "<path>"` waits until a step of the running workflow creates the file in the scenario's directory.
 
 Action:
 
 - `I run "<command>"` runs marche in the scenario's directory. The command is split into words as a shell would, so `--input '{"name": "Ada"}'` is one argument.
-- `the workflow is cancelled` cancels the run started by `the workflow is running its <task> task` with `temporal workflow cancel`, and waits for it to stop.
 - `the worker is killed and started again` kills the scenario's own worker with SIGKILL, starts a new one, and waits for the run started by `the workflow is running its <task> task`.
+- `the worker is killed and started again during each of <n> attempts` does the same once each attempt at the running step has started, by the step's logs, and then waits for the run.
+- `the workflow is cancelled` cancels the run started by `the workflow is running its <task> task` with `temporal workflow cancel`, and waits for it to stop. It stands in for `marche cancel` until that command exists.
 
 Outcome:
 
@@ -33,7 +35,8 @@ Outcome:
 - `the output says:` with the expected text as a doc string. Each line must appear in standard output, after colors and the margin of wrapped lines are removed and whitespace is collapsed.
 - `the error says:` matches standard error the same way, and `marche prints:` matches both streams together.
 - `the JSON output contains:` with a JSON doc string. Standard output must be JSON with every field given.
-- `the process whose ID is in "<path>" has exited`, for a file in the scenario's directory that a shell step wrote its process ID to, such as with `echo $$ > <path> && exec sleep 30`.
+- `the process whose ID is in "<path>" has stopped` reads a process ID from a file in the scenario's directory and checks that the process has exited.
+- `<task> should have a standard output log of <n> bytes` checks the size of the log `marche show` gives for the task.
 
 ## Conformance kit steps
 

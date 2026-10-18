@@ -33,6 +33,9 @@ enum Command {
     Show(commands::show::Args),
     /// Run the interpreter and the shell activity until interrupted
     Worker,
+    /// Run a shell step's command, and stop it when the worker's pipe closes
+    #[command(hide = true)]
+    Guard(commands::guard::Args),
 }
 
 #[tokio::main]
@@ -42,6 +45,7 @@ async fn main() -> ExitCode {
         Command::Run(args) => commands::run::run(args, &cli.target, cli.quiet).await,
         Command::Show(args) => commands::show::show(args, &cli.target).await,
         Command::Worker => commands::worker::worker(&cli.target).await,
+        Command::Guard(args) => commands::guard::guard(args).await,
     };
     result.unwrap_or_else(|error| {
         eprintln!("{:?}", miette::Report::new(error));

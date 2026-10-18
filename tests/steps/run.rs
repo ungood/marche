@@ -90,12 +90,3 @@ fn json_contains(world: &mut MarcheWorld, step: &Step) {
         "{actual:#} doesn't contain {expected:#}"
     );
 }
-
-#[then(regex = r#"^the process whose ID is in "([^"]+)" has exited$"#)]
-fn process_exited(world: &mut MarcheWorld, path: String) {
-    let text = std::fs::read_to_string(world.work_dir().join(&path)).expect("read the PID file");
-    let pid: libc::pid_t = text.trim().parse().expect("the file holds a process ID");
-    // SAFETY: signal 0 sends nothing; it only checks that the process exists.
-    let running = unsafe { libc::kill(pid, 0) } == 0;
-    assert!(!running, "process {pid} from {path} is still running");
-}

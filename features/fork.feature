@@ -79,7 +79,7 @@ Feature: Fork
     And burn should fault
     And simmer should cancel
     And cook should fault
-    And the process whose ID is in "simmer.pid" has exited
+    And the process whose ID is in "simmer.pid" has stopped
 
   Scenario: With compete, the losing branch's process is killed
     Given a workflow with definition:
@@ -112,4 +112,4 @@ Feature: Fork
       """
     And fast should complete
     And slow should cancel
-    And the process whose ID is in "slow.pid" has exited
+    And the process whose ID is in "slow.pid" has stopped

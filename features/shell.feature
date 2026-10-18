@@ -7,6 +7,8 @@ Feature: Shell steps
   standard input. Its output is standard output with one trailing newline
   removed, unless `return` asks for something else. A non-zero exit code
   faults the step with a runtime error, unless `return` is `code` or `all`.
+  The result keeps the last 256 KiB of each stream, and the step's log keeps
+  all of it. Cancelling the run stops every process the step started.
 
   Scenario: Arguments are positional parameters
     Given a workflow with definition:
@@ -196,3 +198,69 @@ Feature: Shell steps
       warning: careful
       quiet: null
       """
+
+  Scenario: A step killed by a signal exits with 128 plus the signal's number
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: signal
+        version: '0.1.0'
+      do:
+        - check:
+            run:
+              shell:
+                command: kill -KILL $$
+              return: code
+      """
+    When the workflow is executed
+    Then the workflow should complete with output:
+      """yaml
+      137
+      """
+
+  Scenario: The result keeps the end of a long stream, and the log keeps all of it
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: long-output
+        version: '0.1.0'
+      do:
+        - count:
+            run:
+              shell:
+                command: seq 1 100000
+            output:
+              as: '{ length: length, last: (split("\n") | last) }'
+      """
+    When the workflow is executed
+    Then the workflow should complete with output:
+      """yaml
+      length: 262143
+      last: '100000'
+      """
+    And count should have a standard output log of 588895 bytes
+
+  Scenario: Cancelling a run stops the processes its step started
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: cancel
+        version: '0.1.0'
+      do:
+        - simmer:
+            run:
+              shell:
+                command: sleep 300 & echo $! > simmer.tmp && mv simmer.tmp simmer.pid; wait
+      """
+    And the workflow is running its simmer task
+    And the workflow has written the file "simmer.pid"
+    When the workflow is cancelled
+    Then the workflow should cancel
+    And simmer should cancel
+    And the process whose ID is in "simmer.pid" has stopped

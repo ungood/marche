@@ -137,7 +137,7 @@ The spec leaves some of `catch` to runtimes, and marche does the following:
 - **Limits:** `limit.attempt.count` counts every attempt, including the first. `limit.duration` stops retrying when the next attempt would start after that long since the first one started. `limit.attempt.duration` isn't supported yet, and neither are retry policies named from `use.retries`.
 - **Results:** a caught error runs `catch.do` with the `try` task's input, and its output is the task's output. Without `catch.do`, the task's output is its input. When a retry policy runs out, `catch.do` handles the last error, and without `catch.do` the task faults with it, so a polling loop such as the gate example doesn't carry on as if it had succeeded.
 
-Infrastructure failure is a separate layer that authors don't see. If a worker dies or a heartbeat times out, Temporal retries the activity up to three times. A step that keeps failing that way faults with a `runtime` error that says so.
+Infrastructure failure is a separate layer that authors don't see. If a worker dies or a heartbeat times out, Temporal runs the step again, for up to three attempts in all. A step whose third attempt is lost too faults with a `runtime` error titled `Step lost`, whose detail says why.
 
 ### Flow and cancellation
 
@@ -150,7 +150,7 @@ marche follows the statechart rule: leaving a `do`, `fork` or `try` scope cancel
 
 Among concurrent branches, the first to fault or complete is the first whose result the interpreter sees, in the order Temporal delivers them, so it's the same on replay. Cancelled branches and the tasks they were running are recorded as `cancelled`.
 
-A cancelled shell step learns of the cancellation through its next heartbeat. The activity sends SIGTERM to the step's process group, waits ten seconds, and then sends SIGKILL. The interpreter waits for activities to confirm they've stopped before the scope finishes, so nothing a cancelled run started is still running when `marche cancel` returns.
+A cancelled shell step learns of the cancellation through its next heartbeat. The activity closes the pipe to the step's guard (see [Shell steps](#shell-steps)), and the guard sends SIGTERM to the step's process group, waits up to ten seconds for every process in it to exit, and then sends SIGKILL to what's left. The activity confirms the cancellation once the guard has exited. The interpreter waits for activities to confirm they've stopped before the scope finishes, so nothing a cancelled run started is still running when `marche cancel` returns.
 
 ### Shell steps
 
@@ -162,7 +162,7 @@ A `run: shell` step runs `/bin/sh -c <command> sh <arguments...>`, so `$1`, `$2`
 - **Standard input:** `stdin` if set, otherwise empty.
 - **Output:** `return` works as the spec says, defaulting to `stdout`. Standard output and error are text with one trailing newline removed, like `$(...)` in a shell. `all` returns `{"code", "stdout", "stderr"}`.
 - **Exit code:** with `return: code` or `return: all`, the exit code is data and a non-zero code doesn't fault the step. With any other `return`, a non-zero code raises an error.
-- **Crashes:** a step's process group dies with the worker, and Temporal retries the activity on the next worker once the step's heartbeats stop, after ten seconds. Long steps should therefore be idempotent. A worker that stops on SIGINT or SIGTERM kills its steps' groups itself. A worker killed with SIGKILL can't, and macOS has no parent-death signal, so each step will run under a small guard process, `marche` itself, that holds one end of a pipe from the worker and kills the step's group when the pipe closes.
+- **Crashes:** a step's process group dies with the worker, and Temporal retries the activity on the next worker once the step's heartbeats stop, after ten seconds. Long steps should therefore be idempotent. A worker can be killed with SIGKILL, and macOS has no parent-death signal, so each step runs under a small guard process, `marche` itself through the hidden subcommand `marche guard`. The worker starts the guard in a process group of its own, with the read end of a pipe whose write end only the worker holds. The guard starts the step in another group and waits. When the pipe closes, because the step was cancelled or the worker exited however it exited, the guard stops the step's group as cancellation does. A SIGTERM, SIGINT or SIGHUP sent to the guard stops the step the same way. The step inherits the guard's standard streams, so they pass straight through, and the guard exits with the step's exit code, or is killed by the same signal, so the activity sees the step's own status.
 - **`await: false`:** not supported in M1, because a detached process would outlive the run's cancellation rule.
 
 ### Limits
@@ -232,7 +232,7 @@ marche uses `temporalio-sdk` 1.x. The M1 spike settled how the design maps onto 
 - **Continue-as-new:** `continue_as_new_suggested()` reads the server's suggestion from the current activation, and `history_length()` gives the event count. `continue_as_new(input, options)` returns an error that the workflow propagates to end the run.
 - **Randomness:** `random::<T>()` draws from Temporal's seeded generator, and `random_stream(name)` gives a named stream that other draws don't disturb. Retry jitter draws from its own stream, `marche.jitter`.
 - **Time:** `workflow_time()` is the replay-safe clock behind `$workflow.startedAt` and `$task.startedAt`.
-- **Shell steps:** a step heartbeats every second with a ten-second timeout, and gets three attempts for worker loss. A non-zero exit is data that the interpreter turns into an error, not an activity failure, so it's never retried as infrastructure. A command that can't start fails the activity with a non-retryable `runtime` error.
+- **Shell steps:** a step heartbeats every second with a ten-second timeout, and gets three attempts for worker loss, with Temporal's default backoff of one second, doubling, between them. A non-zero exit is data that the interpreter turns into an error, not an activity failure, so it's never retried as infrastructure. A command that can't start fails the activity with a non-retryable `runtime` error.
 - **jaq:** the impure builtins are left out by filtering `jaq_std::defs()` and `funs()` by name before compiling. `input` and `inputs` only exist when the host supplies inputs, and `$ENV` only when it's declared, so marche declares neither.
 
 ## Examples
