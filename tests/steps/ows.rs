@@ -97,7 +97,7 @@ fn run_command(world: &MarcheWorld) -> Command {
 }
 
 /// Records a finished run, and its tasks from `marche show --json`.
-fn finish(world: &mut MarcheWorld, result: Value) {
+pub fn finish(world: &mut MarcheWorld, result: Value) {
     let id = result["run"]
         .as_str()
         .expect("marche run --json has a run ID");
@@ -277,7 +277,7 @@ fn position(world: &MarcheWorld, name: &str) -> usize {
         .unwrap_or_else(|| panic!("{name} didn't run"))
 }
 
-fn task<'a>(world: &'a MarcheWorld, name: &str) -> &'a Value {
+pub fn task<'a>(world: &'a MarcheWorld, name: &str) -> &'a Value {
     tasks(world)[position(world, name)]
 }
 
