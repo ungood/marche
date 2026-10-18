@@ -17,7 +17,7 @@ mod workflow;
 
 /// Run Open Workflow Specification definitions as durable workflows on Temporal.
 #[derive(Debug, Parser)]
-#[command(name = "marche", version, about)]
+#[command(name = "marche", version = env!("MARCHE_VERSION"), about)]
 struct Cli {
     #[command(flatten)]
     target: temporal::Target,

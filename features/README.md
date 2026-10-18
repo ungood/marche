@@ -36,6 +36,7 @@ Outcome:
 
 - `the command succeeds`, `the command fails`, `the command fails with exit code <n>`
 - `the output says:` with the expected text as a doc string. Each line must appear in standard output, after colors and miette's decoration are removed and whitespace is collapsed.
+- `the output is marche's version`: standard output is `marche <version>`, where the version is what `git describe --tags --match 'v[0-9]*'` says for the checkout, without the `v`, or `0.0.0-development` when there's no release tag.
 - `the error says:` matches standard error the same way, `the help says:` matches the error's help, and `marche prints:` matches both streams together. `marche doesn't print:` checks that no line appears in either.
 - `the error points at line <n> of "<file>"` checks that one of the error's snippets shows that line.
 - `the worker prints:` matches what the scenario's own worker has printed.
