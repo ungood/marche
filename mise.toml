@@ -18,8 +18,8 @@ description = "Run unit tests and the cucumber features"
 run = [{ task = "test:unit" }, { task = "test:features" }]
 
 [tasks."test:unit"]
-description = "Run unit tests, and check the examples against the Open Workflow schema"
-run = "cargo test --bins --test examples"
+description = "Run unit tests, check the version build.rs sets, and check the examples"
+run = "cargo test --bins --test examples --test version"
 
 [tasks."test:features"]
 description = "Run marche's features and the Open Workflow conformance kit"

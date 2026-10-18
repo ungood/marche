@@ -16,10 +16,20 @@ fn git(args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// The version from what `git describe` printed, without the tag's `v`, or
+/// the placeholder when there's no release tag to describe.
+pub(crate) fn version(described: Option<&str>, placeholder: &str) -> String {
+    described
+        .and_then(|tag| tag.strip_prefix('v'))
+        .unwrap_or(placeholder)
+        .to_string()
+}
+
 fn main() {
-    let version = git(&["describe", "--tags", "--match", "v[0-9]*"])
-        .and_then(|tag| tag.strip_prefix('v').map(String::from))
-        .unwrap_or_else(|| std::env::var("CARGO_PKG_VERSION").expect("cargo sets it"));
+    let version = version(
+        git(&["describe", "--tags", "--match", "v[0-9]*"]).as_deref(),
+        &std::env::var("CARGO_PKG_VERSION").expect("cargo sets it"),
+    );
     println!("cargo:rustc-env=MARCHE_VERSION={version}");
 
     // Describe again when HEAD moves, a commit lands on its branch, or tags
