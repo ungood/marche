@@ -13,6 +13,7 @@ use cucumber::{given, then, when};
 use serde_json::Value;
 
 use super::services::{self, Services};
+use super::shell;
 use super::world::{MarcheWorld, docstring, marche};
 
 /// Task types the interpreter supports. A conformance scenario runs only when
@@ -123,8 +124,8 @@ fn execute(world: &mut MarcheWorld) {
 }
 
 #[given(regex = r"^the workflow is running its (\w+) task$")]
-fn running(world: &mut MarcheWorld, task: String) {
-    world.services = Some(Services::start());
+async fn running(world: &mut MarcheWorld, task: String) {
+    world.services = Some(Services::start().await);
     let mut child = run_command(world)
         .env(
             "XDG_STATE_HOME",
@@ -134,38 +135,33 @@ fn running(world: &mut MarcheWorld, task: String) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("start marche run");
-    // marche run prints "started <reference>" as each task starts.
-    let mut lines = BufReader::new(child.stderr.take().expect("run stderr")).lines();
-    let suffix = format!("/{task}");
-    let started = lines
-        .by_ref()
-        .map_while(Result::ok)
-        .any(|line| line.starts_with("started ") && line.ends_with(&suffix));
-    assert!(started, "{task} didn't start");
-    std::thread::spawn(move || lines.for_each(drop));
+    let stderr = child.stderr.take().expect("run stderr");
     world.pending = Some(child);
+    // marche run prints "started <reference>" as each task starts. Its output
+    // is read on another thread, so scenarios running beside this one carry on.
+    let suffix = format!("/{task}");
+    let started = tokio::task::spawn_blocking(move || {
+        let mut lines = BufReader::new(stderr).lines();
+        let started = lines
+            .by_ref()
+            .map_while(Result::ok)
+            .any(|line| line.starts_with("started ") && line.ends_with(&suffix));
+        std::thread::spawn(move || lines.for_each(drop));
+        started
+    });
+    let started = started.await.expect("read marche run's output");
+    assert!(started, "{task} didn't start");
 }
 
 #[when("the worker is killed and started again")]
-fn restart_worker(world: &mut MarcheWorld) {
+async fn restart_worker(world: &mut MarcheWorld) {
     world
         .services
         .as_mut()
         .expect("the workflow isn't running")
-        .restart_worker();
-    finish_pending(world);
-}
-
-/// Waits for the run started by `the workflow is running its <task> task`.
-fn finish_pending(world: &mut MarcheWorld) {
-    let output = world
-        .pending
-        .take()
-        .expect("the workflow isn't running")
-        .wait_with_output()
-        .expect("wait for marche run");
-    let result = serde_json::from_slice(&output.stdout).expect("marche run --json prints JSON");
-    finish(world, result);
+        .restart_worker()
+        .await;
+    shell::wait_for_run(world).await;
 }
 
 /// Runs marche and parses its standard output, whatever the exit code, since a

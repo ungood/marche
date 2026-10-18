@@ -48,6 +48,15 @@ impl MarcheWorld {
         }
     }
 
+    /// Kills a run still in progress, and stops the scenario's own server and worker.
+    pub fn stop(&mut self) {
+        if let Some(mut run) = self.pending.take() {
+            let _ = run.kill();
+            let _ = run.wait();
+        }
+        self.services = None;
+    }
+
     /// The directory commands run in.
     pub fn work_dir(&self) -> PathBuf {
         self.root.path().join("work")

@@ -248,7 +248,7 @@ The definitions in [examples/](../examples) are the reference examples for this 
 
 ## Testing
 
-- **Conformance:** the OWS conformance kit is vendored in `vendor/ows/ctk/features` and runs with cucumber-rs against the real binary. Each test run starts `temporal server start-dev` on a free port, plus a `marche worker`, and stops both at the end. A kit scenario runs once every task type in its definition is supported, so each task type's work turns on its conformance scenarios.
+- **Conformance:** the OWS conformance kit is vendored in `vendor/ows/ctk/features` and runs with cucumber-rs against the real binary. Each test run starts `temporal server start-dev` on a free port, plus a `marche worker`, and stops both at the end, or when the test process dies. A kit scenario runs once every task type in its definition is supported, so each task type's work turns on its conformance scenarios.
 - **marche's own behavior:** the CLI, cancellation, the parallel `for` extension, and crash recovery are specified in `features/`, in the same style as place's features.
 - **Examples:** every file in `examples/` validates against the vendored schema.
 

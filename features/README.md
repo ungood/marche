@@ -13,7 +13,7 @@ These files specify marche's own behavior: its CLI, cancellation, the parallel `
 
 Each scenario runs in its own temporary directory, with `XDG_STATE_HOME` pointing inside it, so tests never touch the real state directory. Scenarios that execute a workflow share one `temporal server start-dev` and one `marche worker`, started on a free port the first time a scenario needs them and stopped when the run ends. `I run` points marche at that server with `TEMPORAL_ADDRESS`, removes any other `TEMPORAL_` variables, and sets `TEMPORAL_CONFIG_FILE` to a file in the scenario's directory, so the real Temporal configuration never applies. The `temporal` CLI comes from mise.
 
-A scenario that kills the worker, or starts one with flags of its own, gets a server and worker of its own, so it can't disturb the scenarios running beside it.
+A scenario that kills the worker, or starts one with flags of its own, gets a server and worker of its own, so it can't disturb the scenarios running beside it. Those are stopped as soon as the scenario ends, pass or fail. Every server and worker runs in a process group of its own and dies with the test process, even when the run is interrupted.
 
 ## Steps
 

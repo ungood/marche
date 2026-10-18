@@ -28,12 +28,12 @@ fn temporal_config(world: &mut MarcheWorld, step: &Step) {
 }
 
 #[given(regex = r#"^a worker started with "(.+)"$"#)]
-fn worker_started_with(world: &mut MarcheWorld, command: String) {
+async fn worker_started_with(world: &mut MarcheWorld, command: String) {
     let words = shell_words::split(&command).expect("the command splits into words");
     let args = words
         .strip_prefix(&["marche".to_string(), "worker".to_string()])
         .expect("the command starts with marche worker");
-    world.services = Some(Services::start_with(args.to_vec()));
+    world.services = Some(Services::start_with(args.to_vec()).await);
 }
 
 #[when(regex = r#"^I run "(.+)"$"#)]
