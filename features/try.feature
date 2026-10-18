@@ -48,7 +48,6 @@ Feature: Catching and retrying errors
       ready after 3 attempts
       """
 
-  @wip
   Scenario: A step that keeps failing faults when its retries run out
     Given the file "flaky.yaml":
       """yaml
@@ -182,7 +181,6 @@ Feature: Catching and retrying errors
       instance: /do/0/attempt/try/0/check
       """
 
-  @wip
   Scenario: A retry policy named from use is rejected before the run starts
     Given the file "named.yaml":
       """yaml
@@ -211,5 +209,5 @@ Feature: Catching and retrying errors
     And the error says:
       """
       named.yaml can't run on marche yet.
-      /do/0/poll uses the retry policy patient from use.retries, which marche doesn't support yet.
+      /do/0/poll uses catch.retry: patient, which marche doesn't support yet.
       """

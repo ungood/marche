@@ -124,6 +124,13 @@ Errors are OWS error objects with `type`, `status`, `title`, `detail` and `insta
 
 `try` can catch all of these. Retry policies on `catch.retry` run in the interpreter, so a retry reruns the whole `try` block, however many tasks it holds. Delays, backoff, jitter and limits are Temporal timers and replay deterministically, with jitter drawn from Temporal's seeded random source.
 
+The spec leaves some of `catch` to runtimes, and marche does the following:
+
+- **Matching:** `errors.with` matches when the error has every field it lists, with equal values. `when`, `exceptWhen` and the retry policy's own `when` and `exceptWhen` see the error as `$error`, or under the name `as` gives, and so do the `catch.do` tasks.
+- **Delays:** the wait before retry `n` is `delay` with `constant` backoff or none, `delay × n` with `linear`, and `delay × 2^(n-1)` with `exponential`. Jitter adds a random duration between `jitter.from` and `jitter.to`.
+- **Limits:** `limit.attempt.count` counts every attempt, including the first. `limit.duration` stops retrying when the next attempt would start after that long since the first one started. `limit.attempt.duration` isn't supported yet, and neither are retry policies named from `use.retries`.
+- **Results:** a caught error runs `catch.do` with the `try` task's input, and its output is the task's output. Without `catch.do`, the task's output is its input. When a retry policy runs out, `catch.do` handles the last error, and without `catch.do` the task faults with it, so a polling loop such as the gate example doesn't carry on as if it had succeeded.
+
 Infrastructure failure is a separate layer that authors don't see. If a worker dies or a heartbeat times out, Temporal retries the activity up to three times. A step that keeps failing that way faults with a `runtime` error that says so.
 
 ### Flow and cancellation

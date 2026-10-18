@@ -5,6 +5,8 @@
 mod do_list;
 mod run;
 mod set;
+mod try_catch;
+mod wait;
 
 use super::{Halt, Host, Interpreter, Outcome, Task};
 use crate::ows;
@@ -19,6 +21,10 @@ pub async fn execute<H: Host>(
         set::execute(task)
     } else if definition.get("run").is_some() {
         run::execute(interpreter, task).await
+    } else if definition.get("try").is_some() {
+        try_catch::execute(interpreter, task).await
+    } else if definition.get("wait").is_some() {
+        wait::execute(interpreter, task).await
     } else if definition.get("do").is_some() {
         // Checked last, because other task types, such as `for`, have a `do` too.
         do_list::execute(interpreter, task).await

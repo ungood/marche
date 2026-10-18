@@ -8,11 +8,12 @@ pub async fn execute<H: Host>(
 ) -> Result<Outcome, Halt> {
     let token = task.token.child_token();
     let done = interpreter
-        .run_list(
+        .run_list_with(
             &task.definition["do"],
             format!("{}/do", task.reference),
             task.input.clone(),
             &token,
+            &task.scope.variables,
         )
         .await;
     // Leaving the scope cancels anything still running in it.

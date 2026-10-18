@@ -16,8 +16,6 @@
 //! token is cancelled with its parent, and the workflow's root token is
 //! cancelled when the run is.
 
-// For `wait`, `timeout` and retry delays, still to come.
-#[allow(dead_code)]
 pub mod duration;
 mod tasks;
 #[cfg(test)]
@@ -60,7 +58,7 @@ impl Halt {
 }
 
 /// What the interpreter needs from the workflow that runs it.
-// `timer`, `random` and `continue_as_new_suggested` are for task types still to come.
+// `continue_as_new_suggested` is for continuing as new, still to come.
 #[allow(dead_code)]
 pub trait Host {
     /// The workflow clock, which replays identically.
@@ -229,6 +227,19 @@ impl<'h, H: Host> Interpreter<'h, H> {
         input: Value,
         token: &'a Token,
     ) -> LocalBoxFuture<'a, Result<Done, Halt>> {
+        self.run_list_with(list, path, input, token, &[])
+    }
+
+    /// [`Interpreter::run_list`], with variables bound for every expression in
+    /// the list's tasks, such as `catch`'s `as`.
+    pub fn run_list_with<'a>(
+        &'a self,
+        list: &'a Value,
+        path: String,
+        input: Value,
+        token: &'a Token,
+        variables: &'a [(String, Value)],
+    ) -> LocalBoxFuture<'a, Result<Done, Halt>> {
         async move {
             let items: Vec<(&String, &Value)> = list
                 .as_array()
@@ -245,7 +256,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
                 }
                 let reference = format!("{path}/{index}/{name}");
                 let (output, flow) = self
-                    .run_task(name, task, &reference, current, token)
+                    .run_task(name, task, &reference, current, token, variables)
                     .await?;
                 current = output;
                 match flow {
@@ -288,8 +299,10 @@ impl<'h, H: Host> Interpreter<'h, H> {
         reference: &str,
         input: Value,
         token: &Token,
+        variables: &[(String, Value)],
     ) -> Result<(Value, Flow), Halt> {
         let mut scope = self.scope();
+        scope.variables = variables.to_vec();
         scope.task = json!({
             "name": name,
             "reference": reference,

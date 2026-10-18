@@ -53,7 +53,6 @@ const VARIABLES: [&str; 6] = [
 
 impl Scope {
     /// Binds a variable, as `$name`, for expressions in this scope.
-    #[allow(dead_code)] // For `for` and `catch`, still to come.
     pub fn bind(&mut self, name: &str, value: Value) {
         self.variables.retain(|(bound, _)| bound != name);
         self.variables.push((name.to_string(), value));
