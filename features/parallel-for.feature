@@ -83,6 +83,7 @@ Feature: Parallel for
       do:
         - cook:
             for:
+              at: course
               in: [ soup, fish, cake, bread ]
             metadata:
               marche:
@@ -91,11 +92,22 @@ Feature: Parallel for
               - simmer:
                   run:
                     shell:
-                      command: echo start >> events.log; sleep 1; echo end >> events.log
+                      command: |
+                        touch "started.$1"
+                        for i in $(seq 100); do
+                          if [ "$(ls started.* | wc -l)" -eq 4 ]; then
+                            touch "together.$1"
+                            exit 0
+                          fi
+                          sleep 0.1
+                        done
+                        exit 1
+                      arguments:
+                        - ${ $course }
         - count:
             run:
               shell:
-                command: awk '/start/ { n++; if (n > most) most = n } /end/ { n-- } END { print most }' events.log
+                command: ls together.* | wc -l | tr -d ' '
       """
     When the workflow is executed
     Then the workflow should complete with output:
@@ -114,6 +126,7 @@ Feature: Parallel for
       do:
         - cook:
             for:
+              at: course
               in: [ soup, fish, cake, bread, salad, pie ]
             metadata:
               marche:
@@ -123,11 +136,22 @@ Feature: Parallel for
               - simmer:
                   run:
                     shell:
-                      command: echo start >> events.log; sleep 0.5; echo end >> events.log
+                      command: |
+                        touch "running.$1"
+                        ls running.* | wc -l | tr -d ' ' >> counts
+                        touch "started.$1"
+                        next=$(( $1 + 1 ))
+                        for i in $(seq 100); do
+                          if [ "$next" -eq 6 ] || [ -e "started.$next" ]; then break; fi
+                          sleep 0.1
+                        done
+                        rm "running.$1"
+                      arguments:
+                        - ${ $course }
         - count:
             run:
               shell:
-                command: awk '/start/ { n++; if (n > most) most = n } /end/ { n-- } END { print most }' events.log
+                command: sort -n counts | tail -n 1
       """
     When the workflow is executed
     Then the workflow should complete with output:
