@@ -40,6 +40,14 @@ impl Error {
         Self::standard("expression", 400, "Expression failed", detail)
     }
 
+    pub fn validation(detail: impl Into<String>) -> Self {
+        Self::standard("validation", 400, "Validation failed", detail)
+    }
+
+    pub fn timeout(detail: impl Into<String>) -> Self {
+        Self::standard("timeout", 408, "Timed out", detail)
+    }
+
     /// Sets the instance, unless a nested task already set it.
     pub fn at(mut self, reference: &str) -> Self {
         self.instance.get_or_insert_with(|| reference.to_string());
@@ -82,11 +90,11 @@ pub struct TaskRecord {
     pub reference: String,
     pub name: String,
     pub status: Status,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub output: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub error: Option<Error>,
     /// The path of the last attempt's standard output log, for shell steps.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub log: Option<String>,
 }
