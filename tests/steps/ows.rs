@@ -157,11 +157,9 @@ async fn running(world: &mut MarcheWorld, task: String) {
 /// Uses the worker's hidden test hook: it continues each run as new once that
 /// many tasks have finished in it, as if Temporal had suggested it.
 #[given(regex = r"^the worker continues runs as new after every (\d+) tasks$")]
-fn continues_as_new(world: &mut MarcheWorld, tasks: String) {
-    world.services = Some(Services::start_with(vec![
-        "--continue-as-new-after".into(),
-        tasks,
-    ]));
+async fn continues_as_new(world: &mut MarcheWorld, tasks: String) {
+    world.services =
+        Some(Services::start_with(vec!["--continue-as-new-after".into(), tasks]).await);
 }
 
 #[when("the worker is killed and started again")]
@@ -339,7 +337,7 @@ fn runs_times(world: &mut MarcheWorld, name: String, count: usize) {
 }
 
 #[then(regex = r"^the workflow should have continued as new (\d+) times?$")]
-fn continued_as_new(world: &mut MarcheWorld, count: usize) {
+async fn continued_as_new(world: &mut MarcheWorld, count: usize) {
     let id = run(world)["run"].as_str().expect("the run has an ID");
     let address = world.address();
     // Every run in the chain has the workflow's ID, though visibility can take
@@ -356,7 +354,7 @@ fn continued_as_new(world: &mut MarcheWorld, count: usize) {
         if runs > count {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     assert_eq!(runs, count + 1, "the workflow had {runs} Temporal runs");
 }
