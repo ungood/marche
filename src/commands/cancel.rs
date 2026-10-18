@@ -8,7 +8,7 @@ use temporalio_client::{WorkflowCancelOptions, WorkflowGetResultOptions};
 use crate::commands::Verbosity;
 use crate::error::Error;
 use crate::runs;
-use crate::temporal::Target;
+use crate::temporal::{self, Target};
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
@@ -49,6 +49,11 @@ pub async fn cancel(args: Args, target: &Target, verbosity: Verbosity) -> Result
         .cancel(WorkflowCancelOptions::default())
         .await
         .map_err(|error| match error {
+            WorkflowInteractionError::NotFound(status) | WorkflowInteractionError::Rpc(status)
+                if temporal::is_missing_namespace(&status) =>
+            {
+                Error::NoNamespace(temporal.namespace.clone())
+            }
             WorkflowInteractionError::NotFound(_) => Error::NoRun(id.clone()),
             other => Error::Cancel {
                 run: id.clone(),

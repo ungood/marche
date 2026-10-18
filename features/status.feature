@@ -244,7 +244,6 @@ Feature: marche status
       {"run": "$RUN", "status": "cancelled", "running": []}
       """
 
-  @wip
   Scenario: A namespace that doesn't exist is an error
     When I run "marche status examples.nap-01JAB3K4Z7Y8X9W0V1T2S3R4QC --namespace nope"
     Then the command fails with exit code 2

@@ -28,6 +28,7 @@ pub async fn list(args: Args, target: &Target, verbosity: Verbosity) -> Result<E
         Some(runs::current_dir()?)
     };
     let mut runs = runs::list(&temporal, here.as_deref()).await?;
+    let none = runs.is_empty();
     if let Some(limit) = args.limit {
         runs.truncate(limit);
     }
@@ -37,7 +38,7 @@ pub async fn list(args: Args, target: &Target, verbosity: Verbosity) -> Result<E
         return Ok(ExitCode::SUCCESS);
     }
     if runs.is_empty() {
-        if verbosity != Verbosity::Quiet {
+        if none && verbosity != Verbosity::Quiet {
             if args.all {
                 eprintln!("There are no runs.");
             } else {

@@ -208,7 +208,6 @@ Feature: marche list
       {"runs": [{"run": "$RUN", "definition": "examples.second:0.1.0"}]}
       """
 
-  @wip
   Scenario: A limit of 0 lists nothing, without saying there are no runs
     Given the file "shape.yaml":
       """yaml
@@ -231,7 +230,6 @@ Feature: marche list
       No runs were started from this directory.
       """
 
-  @wip
   Scenario: A namespace that doesn't exist is an error
     When I run "marche list --namespace nope"
     Then the command fails with exit code 2

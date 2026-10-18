@@ -14,7 +14,7 @@ use console::Style;
 use futures::StreamExt;
 use jiff::Timestamp;
 use serde::{Serialize, Serializer};
-use temporalio_client::errors::WorkflowInteractionError;
+use temporalio_client::errors::{ClientError, WorkflowInteractionError};
 use temporalio_client::tonic::Request;
 use temporalio_client::{
     Client, WorkflowDescribeOptions, WorkflowExecution, WorkflowExecutionStatus, WorkflowHandle,
@@ -26,7 +26,7 @@ use temporalio_common::protos::temporal::api::workflowservice::v1::DescribeTaskQ
 use ulid::Ulid;
 
 use crate::error::Error;
-use crate::temporal::{DEFINITION, DIRECTORY, Temporal};
+use crate::temporal::{self, DEFINITION, DIRECTORY, Temporal};
 use crate::workflow::Interpret;
 
 const WORKFLOW_TYPE: &str = "marche.interpret";
@@ -160,6 +160,11 @@ pub async fn describe(temporal: &Temporal, id: &str) -> Result<Run, Error> {
         .describe(WorkflowDescribeOptions::default())
         .await
         .map_err(|error| match error {
+            WorkflowInteractionError::NotFound(status) | WorkflowInteractionError::Rpc(status)
+                if temporal::is_missing_namespace(&status) =>
+            {
+                Error::NoNamespace(temporal.namespace.clone())
+            }
             WorkflowInteractionError::NotFound(_) => Error::NoRun(id.to_string()),
             other => Error::Lookup {
                 run: id.to_string(),
@@ -221,6 +226,11 @@ async fn executions(temporal: &Temporal, query: &str) -> Result<Vec<WorkflowExec
     let mut executions = Vec::new();
     while let Some(execution) = stream.next().await {
         executions.push(execution.map_err(|error| {
+            if let ClientError::Rpc(status) = &error
+                && temporal::is_missing_namespace(status)
+            {
+                return Error::NoNamespace(temporal.namespace.clone());
+            }
             let message = error.to_string();
             match [DEFINITION.name(), DIRECTORY.name()]
                 .into_iter()
