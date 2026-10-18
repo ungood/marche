@@ -37,6 +37,9 @@ pub struct Scope {
     pub task: Value,
     pub workflow: Value,
     pub runtime: Value,
+    /// Variables a task binds, such as `for`'s `each` and `at` or `catch`'s
+    /// `as`, by name without the `$`. A later binding of a name hides an earlier one.
+    pub variables: Vec<(String, Value)>,
 }
 
 const VARIABLES: [&str; 6] = [
@@ -49,7 +52,22 @@ const VARIABLES: [&str; 6] = [
 ];
 
 impl Scope {
-    fn values(&self) -> [&Value; 6] {
+    /// Binds a variable, as `$name`, for expressions in this scope.
+    #[allow(dead_code)] // For `for` and `catch`, still to come.
+    pub fn bind(&mut self, name: &str, value: Value) {
+        self.variables.retain(|(bound, _)| bound != name);
+        self.variables.push((name.to_string(), value));
+    }
+
+    fn names(&self) -> Vec<String> {
+        VARIABLES
+            .iter()
+            .map(|name| name.to_string())
+            .chain(self.variables.iter().map(|(name, _)| format!("${name}")))
+            .collect()
+    }
+
+    fn values(&self) -> impl Iterator<Item = &Value> {
         [
             &self.context,
             &self.input,
@@ -58,6 +76,8 @@ impl Scope {
             &self.workflow,
             &self.runtime,
         ]
+        .into_iter()
+        .chain(self.variables.iter().map(|(_, value)| value))
     }
 }
 
@@ -135,9 +155,10 @@ pub fn evaluate(code: &str, input: &Value, scope: &Scope) -> Result<Value, ows::
                 messages.join("; ")
             ))
         })?;
+    let names = scope.names();
     let filter = Compiler::default()
         .with_funs(funs)
-        .with_global_vars(VARIABLES)
+        .with_global_vars(names.iter().map(String::as_str))
         .compile(modules)
         .map_err(|errors| undefined(code, errors))?;
 
@@ -257,6 +278,18 @@ mod tests {
         assert_eq!(
             evaluate("[$context.order, $runtime.name]", &json!(null), &scope),
             Ok(json!(["soup", "marche"]))
+        );
+    }
+
+    #[test]
+    fn binds_task_variables() {
+        let mut scope = Scope::default();
+        scope.bind("color", json!("red"));
+        scope.bind("index", json!(0));
+        scope.bind("color", json!("blue"));
+        assert_eq!(
+            evaluate("[$color, $index]", &json!(null), &scope),
+            Ok(json!(["blue", 0]))
         );
     }
 

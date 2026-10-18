@@ -16,6 +16,9 @@
 //! token is cancelled with its parent, and the workflow's root token is
 //! cancelled when the run is.
 
+// For `wait`, `timeout` and retry delays, still to come.
+#[allow(dead_code)]
+pub mod duration;
 mod tasks;
 #[cfg(test)]
 mod tests;
