@@ -20,7 +20,7 @@ static SCHEMA: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
 });
 
 /// Task types the interpreter runs. `run` is checked by process.
-const SUPPORTED_TASKS: &[&str] = &["do", "set", "run", "switch", "raise", "try", "wait"];
+const SUPPORTED_TASKS: &[&str] = &["do", "set", "run", "switch", "raise", "try", "wait", "fork"];
 /// `do` comes last, because `for` tasks have a `do` too.
 const TASK_TYPES: &[&str] = &[
     "call", "emit", "for", "fork", "listen", "raise", "run", "set", "switch", "try", "wait", "do",
@@ -201,6 +201,10 @@ fn check_list(list: &Value, path: &str, problems: &mut Vec<String>) {
         if kind == "do" {
             check_list(&task["do"], &format!("{reference}/do"), problems);
         }
+        if kind == "fork" {
+            let branches = &task["fork"]["branches"];
+            check_list(branches, &format!("{reference}/fork/branches"), problems);
+        }
         if kind == "try" {
             check_try(task, &reference, problems);
         }
@@ -327,6 +331,24 @@ mod tests {
                 "The workflow uses an output.schema in the avro format, which marche doesn't support yet.",
                 "/do/0/cook uses an input.schema that isn't a valid JSON Schema: 5 is not valid under any of the schemas listed in the 'anyOf' keyword at /type.",
                 "/do/0/cook uses an export.schema that refers to file:///etc/context.json, which marche doesn't fetch, because a run must replay the same way every time.",
+            ]
+        );
+    }
+
+    #[test]
+    fn checks_fork_branches() {
+        let definition = json!({
+            "do": [
+                {"cook": {"fork": {"branches": [
+                    {"stir": {"set": {}}},
+                    {"ready": {"listen": {"to": {"one": {"with": {"type": "ready"}}}}}},
+                ]}}},
+            ]
+        });
+        assert_eq!(
+            unsupported(&definition),
+            [
+                "/do/0/cook/fork/branches/1/ready is a listen task, which marche doesn't support yet."
             ]
         );
     }
