@@ -10,7 +10,6 @@ Feature: Switch
   `marche run` rejects a case whose `then` names no task in the switch's
   list, before the run starts.
 
-  @wip
   Scenario: The run follows the switch's own then when no case matches
     Given a workflow with definition:
       """yaml
@@ -45,7 +44,6 @@ Feature: Switch
     And checkColor should run first
     And paintBlue should run last
 
-  @wip
   Scenario: The first matching case wins
     Given a workflow with definition:
       """yaml
@@ -83,7 +81,6 @@ Feature: Switch
     And checkSize should run first
     And serveLarge should run last
 
-  @wip
   Scenario: A case's then exit leaves the enclosing do
     Given a workflow with definition:
       """yaml
@@ -119,7 +116,6 @@ Feature: Switch
     And checkAppetite should run before dessert
     And dessert should run last
 
-  @wip
   Scenario: A case whose when fails faults the switch
     Given a workflow with definition:
       """yaml
@@ -148,7 +144,6 @@ Feature: Switch
       """
     And checkColor should fault
 
-  @wip
   Scenario: A case whose then names no task in the list is rejected before the run starts
     Given the file "paint.yaml":
       """yaml

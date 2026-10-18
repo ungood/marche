@@ -88,7 +88,7 @@ The interpreter follows the OWS 1.0.x DSL and its reference. This section record
 | --- | --- | --- |
 | `do` | Yes | Runs its tasks in order, following `then`. |
 | `set` | Yes | |
-| `switch` | Yes | Cases are checked in order. `then` can name a task in the same list, `continue`, `exit` or `end`. |
+| `switch` | Yes | Cases are checked in order. `then` can name a task in the same list, `continue`, `exit` or `end`. When no case matches, the switch's own `then` applies. |
 | `raise` | Yes | Inline errors. `instance` defaults to the task's reference. |
 | `try` | Yes | `catch` with `errors.with`, `when`, `exceptWhen`, `as`, `retry` and `do`. |
 | `wait` | Yes | A Temporal timer. Both duration forms are accepted. |

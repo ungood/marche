@@ -243,3 +243,110 @@ fn cancelling_a_parent_cancels_its_children() {
     parent.cancel();
     assert!(child.is_cancelled());
 }
+
+const COLORS: &str = r#"
+do:
+  - switchColor:
+      switch:
+        - red:
+            when: .color == "red"
+            then: setRed
+        - warm:
+            when: .color == "red" or .color == "orange"
+            then: setWarm
+        - other:
+            when: .color == "green"
+            then: exit
+      then: setNone
+  - setRed:
+      set:
+        paint: red
+      then: end
+  - setWarm:
+      set:
+        paint: warm
+      then: end
+  - setNone:
+      set:
+        paint: none
+"#;
+
+#[test]
+fn switch_follows_the_first_matching_case() {
+    let host = FakeHost::default();
+    let output = run(&host, COLORS, json!({"color": "red"}));
+    assert_eq!(output, Ok(json!({"paint": "red"})));
+    let output = run(&host, COLORS, json!({"color": "orange"}));
+    assert_eq!(output, Ok(json!({"paint": "warm"})));
+}
+
+#[test]
+fn switch_case_flow_directives_apply() {
+    let host = FakeHost::default();
+    let output = run(&host, COLORS, json!({"color": "green"}));
+    assert_eq!(output, Ok(json!({"color": "green"})));
+}
+
+#[test]
+fn switch_follows_its_own_then_when_no_case_matches() {
+    let host = FakeHost::default();
+    let output = run(&host, COLORS, json!({"color": "blue"}));
+    assert_eq!(output, Ok(json!({"paint": "none"})));
+    assert_eq!(
+        *host.events.borrow(),
+        [
+            "started /do/0/switchColor",
+            "completed /do/0/switchColor",
+            "started /do/3/setNone",
+            "completed /do/3/setNone"
+        ]
+    );
+}
+
+#[test]
+fn a_switch_case_without_when_is_the_default() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - pick:
+      switch:
+        - never:
+            when: "false"
+            then: end
+        - fallback:
+            then: chosen
+  - skipped:
+      set:
+        chosen: false
+  - chosen:
+      set:
+        chosen: true
+"#,
+        json!({}),
+    );
+    assert_eq!(output, Ok(json!({"chosen": true})));
+}
+
+#[test]
+fn a_failing_switch_case_faults_the_switch() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - pick:
+      switch:
+        - broken:
+            when: .color | ascii_downcase
+            then: end
+"#,
+        json!({"color": 7}),
+    );
+    let Err(Halt::Fault(error)) = output else {
+        panic!("expected a fault: {output:?}")
+    };
+    assert_eq!(error.status, 400);
+    assert_eq!(error.instance.as_deref(), Some("/do/0/pick"));
+}

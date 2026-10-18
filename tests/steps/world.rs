@@ -83,10 +83,12 @@ pub fn marche() -> &'static Path {
 }
 
 /// Text with colors removed and runs of whitespace collapsed, for matching messages.
+/// miette's `│` margin is removed too, so a message it wraps still matches.
 pub fn plain(bytes: &[u8]) -> String {
     let stripped = strip_ansi_escapes::strip(bytes);
     String::from_utf8_lossy(&stripped)
         .split_whitespace()
+        .filter(|word| *word != "│")
         .collect::<Vec<_>>()
         .join(" ")
 }

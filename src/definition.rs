@@ -19,7 +19,7 @@ static SCHEMA: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
 });
 
 /// Task types the interpreter runs. `run` is checked by process.
-const SUPPORTED_TASKS: &[&str] = &["do", "set", "run"];
+const SUPPORTED_TASKS: &[&str] = &["do", "set", "run", "switch"];
 /// `do` comes last, because `for` tasks have a `do` too.
 const TASK_TYPES: &[&str] = &[
     "call", "emit", "for", "fork", "listen", "raise", "run", "set", "switch", "try", "wait", "do",
@@ -183,6 +183,19 @@ fn check_list(list: &Value, path: &str, problems: &mut Vec<String>) {
                 "{reference} has then: {target}, but its list has no task named {target}."
             ));
         }
+        let cases = task["switch"].as_array().into_iter().flatten().enumerate();
+        for (case_index, (case, body)) in
+            cases.filter_map(|(index, item)| Some((index, item.as_object()?.iter().next()?)))
+        {
+            if let Some(then) = body["then"].as_str()
+                && !["continue", "exit", "end"].contains(&then)
+                && !tasks.iter().any(|(name, _)| *name == then)
+            {
+                problems.push(format!(
+                    "{reference}/switch/{case_index}/{case} has then: {then}, but the switch's list has no task named {then}."
+                ));
+            }
+        }
         if kind == "do" {
             check_list(&task["do"], &format!("{reference}/do"), problems);
         }
@@ -214,6 +227,26 @@ mod tests {
                 "/do/1/outer/do/0/inner uses timeout, which marche doesn't support yet.",
                 "/do/2/jump has then: nowhere, but its list has no task named nowhere.",
                 "/do/3/loop is a for task, which marche doesn't support yet.",
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_switch_cases_that_jump_outside_their_list() {
+        let definition = json!({
+            "do": [
+                {"check": {"switch": [
+                    {"red": {"when": ".red", "then": "paint"}},
+                    {"blue": {"when": ".blue", "then": "nowhere"}},
+                    {"other": {"then": "exit"}},
+                ]}},
+                {"paint": {"set": {}}},
+            ]
+        });
+        assert_eq!(
+            unsupported(&definition),
+            [
+                "/do/0/check/switch/1/blue has then: nowhere, but the switch's list has no task named nowhere."
             ]
         );
     }
