@@ -21,6 +21,8 @@ use crate::shell::TERMINATION_GRACE;
 
 /// How often a stopping group is checked for processes that are left.
 const POLL: Duration = Duration::from_millis(50);
+/// How long the guard waits for a group to go after SIGKILL.
+const KILL_WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
@@ -91,7 +93,11 @@ async fn supervise(
 }
 
 /// Sends SIGTERM to the group, then SIGKILL if any of it is still running
-/// after the grace period.
+/// after the grace period, and returns once the whole group has exited.
+///
+/// The step reports the signal that stopped it. killpg signals the group's
+/// processes one at a time, so the step's shell can see its child die and
+/// exit 0 before its own signal lands; that exit isn't the step's result.
 async fn terminate(
     group: libc::pid_t,
     child: &mut Child,
@@ -100,24 +106,33 @@ async fn terminate(
     let deadline = Instant::now() + grace;
     // SAFETY: killpg only sends a signal, to the group this guard started.
     unsafe { libc::killpg(group, libc::SIGTERM) };
+    let mut signal = libc::SIGTERM;
     let status = match tokio::time::timeout_at(deadline, child.wait()).await {
         Ok(status) => status?,
         Err(_) => {
+            signal = libc::SIGKILL;
             // SAFETY: as above.
             unsafe { libc::killpg(group, libc::SIGKILL) };
-            return child.wait().await;
+            child.wait().await?
         }
     };
     // The step has exited, but processes it started may still be stopping.
     while running(group) {
-        if Instant::now() >= deadline {
+        if signal != libc::SIGKILL && Instant::now() >= deadline {
+            signal = libc::SIGKILL;
             // SAFETY: as above.
             unsafe { libc::killpg(group, libc::SIGKILL) };
+        }
+        if signal == libc::SIGKILL && Instant::now() >= deadline + KILL_WAIT {
+            // Nothing outlives SIGKILL for long; don't hang if the OS lags.
             break;
         }
         tokio::time::sleep(POLL).await;
     }
-    Ok(status)
+    Ok(match status.signal() {
+        Some(_) => status,
+        None => ExitStatus::from_raw(signal),
+    })
 }
 
 /// Whether any process is left in the group.
@@ -235,11 +250,8 @@ mod tests {
             .await
             .unwrap();
         let status = supervise(child, async {}, TERMINATION_GRACE).await.unwrap();
-        // killpg signals the group's processes one at a time, so sh can see
-        // sleep die and exit as it did before its own signal lands.
-        let terminated =
-            status.signal() == Some(libc::SIGTERM) || status.code() == Some(128 + libc::SIGTERM);
-        assert!(terminated, "{status:?}");
+        // However sh itself ended, the step reports the signal that stopped it.
+        assert_eq!(status.signal(), Some(libc::SIGTERM), "{status:?}");
         assert!(!running(group));
     }
 
@@ -261,16 +273,9 @@ mod tests {
         let status = supervise(child, async {}, Duration::from_millis(500))
             .await
             .unwrap();
-        // As above, sh can see sleep die and exit before its own SIGKILL lands.
-        let killed =
-            status.signal() == Some(libc::SIGKILL) || status.code() == Some(128 + libc::SIGKILL);
-        assert!(killed, "{status:?}");
+        assert_eq!(status.signal(), Some(libc::SIGKILL), "{status:?}");
         assert!(started.elapsed() >= Duration::from_millis(500));
-        // After SIGKILL, the guard doesn't wait for the rest of the group to go.
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while running(group) && Instant::now() < deadline {
-            tokio::time::sleep(POLL).await;
-        }
+        // The guard returns only once the whole group has gone.
         assert!(!running(group));
     }
 }
