@@ -43,7 +43,8 @@ pub async fn execute<H: Host>(
                     flow: done.end.then_some(Flow::End),
                 });
             }
-            Err(Halt::Cancelled) => return Err(Halt::Cancelled),
+            // A try blocks continuing as new, so only cancellation gets here.
+            Err(halt @ (Halt::Cancelled | Halt::ContinueAsNew)) => return Err(halt),
             Err(Halt::Fault(error)) => error,
         };
         let mut scope = task.scope.clone();

@@ -97,7 +97,7 @@ The interpreter follows the OWS 1.0.x DSL and its reference. This section record
 | `try` | Yes | `catch` with `errors.with`, `when`, `exceptWhen`, `as`, `retry` and `do`. |
 | `wait` | Yes | A Temporal timer. Both duration forms are accepted. |
 | `run: shell` | Yes | See [Shell steps](#shell-steps). |
-| `for` | Yes | Sequential by default, or parallel with the [extension](#extension-parallel-for). |
+| `for` | Yes | Sequential by default, or parallel with the [extension](#extension-parallel-for). `in` must give an array. `while` is checked before each iteration, with the item and index bound, on the data the iteration would get. Every iteration's tasks have the same references, so task records list them once per iteration. |
 | `fork` | Yes | Concurrent branches, with or without `compete`. |
 | `listen` | M2 | With `marche signal`, delivering CloudEvents as Temporal signals. |
 | `emit` | Later | |
@@ -175,7 +175,9 @@ Temporal payloads are limited to 2 MB, and a workflow's history to about 50,000 
 
 - Standard output and error are capped at 256 KiB each in the step's result, keeping the end of the stream. The full streams always go to `~/.local/state/marche/runs/<run>/<reference>/<attempt>.stdout` and `.stderr`, and `marche show` prints their paths.
 - When Temporal suggests it, the interpreter continues as new at the next point where no tasks are in flight, carrying the definition, the current position, the context and the current data. A long sequential `for` or a `switch` loop can therefore run indefinitely.
-- That state is small: the example definitions are 230 to 663 bytes as JSON, a position is a list of indexes, and the context and current data are whatever the workflow keeps, which the payload limit bounds. The task records `marche show` reads aren't carried, because they grow with every task and each holds its output, up to 512 KiB for a shell step's two streams. They stay with the Temporal run that recorded them, and `marche show` follows the chain of runs.
+- Such a point is just before a task in a task list, when every task around it is a `do` or a sequential `for` without a `timeout`, and the workflow has no `timeout`. Anything else around it, such as a `try`, a `fork`, a parallel `for` or a timeout's timer, has work in flight that a new run would lose, so the run waits until it has left them. Each run also finishes at least one task before it continues as new, so a chain always makes progress.
+- The position is a list of frames from the workflow's task list inwards: the index of the task each list is in, the raw and transformed input and `$task.startedAt` of each `do` or `for` task around the point, a `for` task's items and current iteration, and the input of the task to run next. The next run walks the same path down without evaluating `if`, `input.from` or `for.in` again.
+- That state is small: the example definitions are 230 to 663 bytes as JSON, a position is a few frames, and the context and current data are whatever the workflow keeps, which the payload limit bounds. The task records `marche show` reads aren't carried, because they grow with every task and each holds its output, up to 512 KiB for a shell step's two streams. They stay with the Temporal run that recorded them. The next run records the tasks around its position as started again, before any other, and `marche show` and `marche run` follow the chain of runs back through each run's first event, putting those records in the place of the earlier run's records that were still running.
 
 ## Extension: parallel for
 
@@ -214,6 +216,8 @@ OWS has no way to run a dynamic number of tasks in parallel. `fork` needs its br
 - **Order:** iterations start in item order, each as soon as a slot is free.
 - **Output:** an array of every iteration's output, in item order, whatever order they finished in.
 - **Failure:** with `cancelOnFailure: true`, the first iteration to fault cancels the others, by the statechart rule, and the task faults with that error. With `false`, every iteration runs to the end, and the task then faults with the error of the lowest-indexed iteration that faulted.
+- **Flow:** `then: end` inside an iteration ends that iteration, and the workflow ends once every iteration has finished.
+- **Records:** concurrent iterations run the same tasks under the same references, so the host identifies each task record by an ID it returns when the task starts, not by its reference.
 - **Restrictions:** `while` isn't allowed, because it depends on sequential state. `export` isn't allowed inside the iterations, because concurrent writes to the context would race. `marche validate` rejects both.
 
 ### Portability
@@ -228,12 +232,12 @@ As a proposal, the same settings would move into the `for` object itself, as `fo
 
 marche uses `temporalio-sdk` 1.x. The M1 spike settled how the design maps onto it.
 
-- **Workflow and activity:** `marche.interpret` and `marche.shell` are the `name` overrides on `#[run]` and `#[activity]`. The workflow's input is `{definition, hash, input, directory}`, and its output is the workflow output. A faulted run fails the workflow with a non-retryable application failure whose type is the OWS error's `type` and whose details are the error object, so `marche run` can print it. A cancelled run ends the workflow as cancelled.
+- **Workflow and activity:** `marche.interpret` and `marche.shell` are the `name` overrides on `#[run]` and `#[activity]`. The workflow's input is `{definition, hash, input, directory}`, plus `resume`, the state above, when an earlier run continued as new, and its output is the workflow output. A faulted run fails the workflow with a non-retryable application failure whose type is the OWS error's `type` and whose details are the error object, so `marche run` can print it. A cancelled run ends the workflow as cancelled.
 - **Task records:** the workflow keeps a record of each task it starts, with its status, output, error and log, and answers the query `tasks` with them. Temporal answers queries on closed runs by replaying them on a worker, so `marche show` works after a run ends, and `marche run` polls the same query to print progress.
 - **The interpreter:** it's written against a small host interface (the workflow clock, task records and shell steps), which the workflow implements with its context. Unit tests drive it with a fake host. Workflow futures aren't `Send`, so the recursive walk over task lists uses local boxed futures.
 - **Cancellation scopes:** `WorkflowCancellationToken` is the scope. Each `do`, `fork` and `try` takes a `child_token()` of its parent's, and passes it to the activities and timers it starts through their options' `cancellation_token`. Cancelling the token cancels everything under it, and the workflow's root token is cancelled when the run is. A token made with `WorkflowCancellationToken::new()` is detached, for cleanup that must run anyway.
 - **Waiting for cancellation:** `ActivityCancellationType::WaitCancellationCompleted` makes a cancelled activity's future resolve only after the activity has confirmed it stopped, which is what `marche cancel` needs. Shell steps use it. Concurrent branches use the SDK's deterministic `select!`, `join!` and `join_all`, never tokio's or futures'.
-- **Continue-as-new:** `continue_as_new_suggested()` reads the server's suggestion from the current activation, and `history_length()` gives the event count. `continue_as_new(input, options)` returns an error that the workflow propagates to end the run.
+- **Continue-as-new:** `continue_as_new_suggested()` reads the server's suggestion from the current activation, and `history_length()` gives the event count. `continue_as_new(input, options)` returns an error that the workflow propagates to end the run. The interpreter unwinds to the workflow with `Halt::ContinueAsNew` to get there. `WorkflowGetResultOptions` follows continued runs by default, so `marche run` waits for the end of the chain.
 - **Randomness:** `random::<T>()` draws from Temporal's seeded generator, and `random_stream(name)` gives a named stream that other draws don't disturb. Retry jitter draws from its own stream, `marche.jitter`.
 - **Time:** `workflow_time()` is the replay-safe clock behind `$workflow.startedAt` and `$task.startedAt`.
 - **Shell steps:** a step heartbeats every second with a ten-second timeout, and gets three attempts for worker loss, with Temporal's default backoff of one second, doubling, between them. A non-zero exit is data that the interpreter turns into an error, not an activity failure, so it's never retried as infrastructure. A command that can't start fails the activity with a non-retryable `runtime` error.

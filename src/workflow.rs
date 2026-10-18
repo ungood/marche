@@ -1,6 +1,7 @@
 //! The Temporal workflow `marche.interpret`, which runs the interpreter and
 //! records each task for `marche show`.
 
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::FutureExt;
@@ -12,10 +13,11 @@ use temporalio_common::error::IncomingError;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityCancellationType, ActivityExecutionError, ActivityOptions, ApplicationFailure,
-    TimerOptions, TimerResult, WorkflowContext, WorkflowContextView, WorkflowResult,
-    WorkflowTermination,
+    ContinueAsNewOptions, TimerOptions, TimerResult, WorkflowContext, WorkflowContextView,
+    WorkflowResult, WorkflowTermination,
 };
 
+use crate::interpreter::resume::State;
 use crate::interpreter::{Halt, Host, Interpreter, Token};
 use crate::ows::{self, Status, TaskRecord};
 use crate::shell::{ShellActivities, ShellRequest, ShellResult};
@@ -27,6 +29,10 @@ const SHELL_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Shell steps have no time limit of their own; a task `timeout` sets one.
 const SHELL_TIMEOUT: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 
+/// A test hook, set once when the worker starts: continue each run as new once
+/// this many tasks have finished in it, as if Temporal had suggested it.
+pub static CONTINUE_AS_NEW_AFTER: OnceLock<usize> = OnceLock::new();
+
 /// The workflow input: everything a run needs, so it never reads the file again.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunInput {
@@ -36,25 +42,48 @@ pub struct RunInput {
     pub input: Value,
     /// The directory `marche run` was started in.
     pub directory: String,
+    /// Where to carry on, for a run that an earlier run continued as new.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<State>,
 }
 
 #[workflow]
 #[derive(Default)]
 pub struct Interpret {
+    /// The tasks started in this run. Earlier runs of the chain keep theirs.
     tasks: Vec<TaskRecord>,
+    /// How many of them have finished.
+    finished: usize,
 }
 
 #[workflow_methods]
 impl Interpret {
     #[run(name = "marche.interpret")]
-    pub async fn run(ctx: &mut WorkflowContext<Self>, input: RunInput) -> WorkflowResult<Value> {
+    pub async fn run(
+        ctx: &mut WorkflowContext<Self>,
+        mut input: RunInput,
+    ) -> WorkflowResult<Value> {
         let host = WorkflowHost { ctx: ctx.clone() };
         let id = ctx.workflow_id().to_string();
-        let mut interpreter = Interpreter::new(&host, input.definition, &id, &input.directory);
+        let mut interpreter =
+            Interpreter::new(&host, input.definition.clone(), &id, &input.directory);
         // The run's root scope: Temporal cancels it when the run is cancelled.
         let token = ctx.cancellation_token();
-        match interpreter.run(input.input, &token).await {
+        let result = match input.resume.take() {
+            Some(state) => interpreter.resume(input.input.clone(), state, &token).await,
+            None => interpreter.run(input.input.clone(), &token).await,
+        };
+        match result {
             Ok(output) => Ok(output),
+            Err(Halt::ContinueAsNew) => {
+                let next = RunInput {
+                    resume: Some(interpreter.continuation()),
+                    ..input
+                };
+                match ctx.continue_as_new(next, ContinueAsNewOptions::default()) {
+                    Err(termination) => Err(termination),
+                }
+            }
             Err(Halt::Cancelled) => Err(WorkflowTermination::cancelled()),
             Err(Halt::Fault(error)) => Err(ApplicationFailure::builder(error.clone())
                 .type_name(error.kind.clone())
@@ -81,7 +110,7 @@ impl Host for WorkflowHost {
         self.ctx.workflow_time().unwrap_or(UNIX_EPOCH)
     }
 
-    fn task_started(&self, reference: &str, name: &str) {
+    fn task_started(&self, reference: &str, name: &str) -> usize {
         self.ctx.state_mut(|state| {
             state.tasks.push(TaskRecord {
                 reference: reference.to_string(),
@@ -91,19 +120,16 @@ impl Host for WorkflowHost {
                 error: None,
                 log: None,
             });
-        });
+            state.tasks.len() - 1
+        })
     }
 
-    fn task_finished(&self, reference: &str, result: &Result<Value, Halt>) {
+    fn task_finished(&self, record: usize, result: &Result<Value, Halt>) {
         self.ctx.state_mut(|state| {
-            let Some(task) = state
-                .tasks
-                .iter_mut()
-                .rev()
-                .find(|task| task.reference == reference && task.status == Status::Running)
-            else {
+            let Some(task) = state.tasks.get_mut(record) else {
                 return;
             };
+            state.finished += 1;
             match result {
                 Ok(output) => {
                     task.status = Status::Completed;
@@ -114,6 +140,8 @@ impl Host for WorkflowHost {
                     task.error = Some(error.clone());
                 }
                 Err(Halt::Cancelled) => task.status = Status::Cancelled,
+                // The interpreter doesn't finish a task that continues as new.
+                Err(Halt::ContinueAsNew) => {}
             }
         });
     }
@@ -145,8 +173,14 @@ impl Host for WorkflowHost {
         self.ctx.random_stream(stream).random::<f64>()
     }
 
+    /// Only once a task has finished in this run, so every run makes progress.
     fn continue_as_new_suggested(&self) -> bool {
-        self.ctx.continue_as_new_suggested()
+        let finished = self.ctx.state(|state| state.finished);
+        finished > 0
+            && (self.ctx.continue_as_new_suggested()
+                || CONTINUE_AS_NEW_AFTER
+                    .get()
+                    .is_some_and(|after| finished >= *after))
     }
 
     fn shell(

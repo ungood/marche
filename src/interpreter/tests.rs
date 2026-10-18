@@ -1,9 +1,11 @@
 //! Interpreter tests against a fake host.
 
+mod continue_as_new;
+mod for_each;
 mod try_catch;
 mod wait;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::task::Poll;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -22,6 +24,8 @@ use crate::shell::{ShellRequest, ShellResult};
 #[derive(Default)]
 struct FakeHost {
     events: RefCell<Vec<String>>,
+    /// The reference of each task record, by its ID.
+    records: RefCell<Vec<String>>,
     requests: RefCell<Vec<ShellRequest>>,
     results: RefCell<Vec<ShellResult>>,
     timers: RefCell<Vec<Duration>>,
@@ -30,6 +34,10 @@ struct FakeHost {
     /// `Some(n)` finishes after yielding `n` times, and `None` runs until it's
     /// cancelled. Other steps finish at once.
     steps: RefCell<BTreeMap<String, Option<usize>>>,
+    /// Suggests continuing as new once this many tasks have finished since
+    /// `finished` was last reset, as a new run would.
+    continue_after: Cell<Option<usize>>,
+    finished: Cell<usize>,
 }
 
 impl Host for FakeHost {
@@ -37,18 +45,24 @@ impl Host for FakeHost {
         UNIX_EPOCH + Duration::from_secs(1_700_000_000) + self.timers.borrow().iter().sum()
     }
 
-    fn task_started(&self, reference: &str, _name: &str) {
+    fn task_started(&self, reference: &str, _name: &str) -> usize {
         self.events
             .borrow_mut()
             .push(format!("started {reference}"));
+        let mut records = self.records.borrow_mut();
+        records.push(reference.to_string());
+        records.len() - 1
     }
 
-    fn task_finished(&self, reference: &str, result: &Result<Value, Halt>) {
+    fn task_finished(&self, record: usize, result: &Result<Value, Halt>) {
+        let reference = self.records.borrow()[record].clone();
         let status = match result {
             Ok(_) => "completed",
             Err(Halt::Fault(_)) => "faulted",
             Err(Halt::Cancelled) => "cancelled",
+            Err(Halt::ContinueAsNew) => "continued",
         };
+        self.finished.set(self.finished.get() + 1);
         self.events
             .borrow_mut()
             .push(format!("{status} {reference}"));
@@ -111,7 +125,9 @@ impl Host for FakeHost {
     }
 
     fn continue_as_new_suggested(&self) -> bool {
-        false
+        self.continue_after
+            .get()
+            .is_some_and(|after| self.finished.get() >= after)
     }
 }
 

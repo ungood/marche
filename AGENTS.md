@@ -38,3 +38,4 @@ Skills live in `.agents/skills/`. `.claude/skills` is a symlink to that director
 - `@wip` is the only Gherkin tag in `features/`. The runner excludes `@wip` scenarios.
 - mise provides the Rust toolchain, `protoc` (which the Temporal SDK needs to build), the `temporal` CLI, rumdl, actionlint with shellcheck, and the tasks: `mise run build`, `mise run test` (or `test:unit` and `test:features`), `mise run lint`, `mise run fmt`, `mise run dist`. Run `mise run lint` and `mise run test` before committing.
 - Machine-specific settings go in `mise.local.toml`, which git ignores.
+- Test hook: `marche worker --continue-as-new-after <n>`, a hidden flag, makes the worker continue each run as new once `<n>` tasks have finished in it, as if Temporal had suggested it. `features/continue-as-new.feature` uses it. The interpreter's continue-as-new state is in `src/interpreter/resume.rs`.

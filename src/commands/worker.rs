@@ -8,9 +8,20 @@ use crate::commands::Verbosity;
 use crate::error::Error;
 use crate::shell::{ShellActivities, state_dir};
 use crate::temporal::Target;
-use crate::workflow::{Interpret, TASK_QUEUE};
+use crate::workflow::{CONTINUE_AS_NEW_AFTER, Interpret, TASK_QUEUE};
 
-pub async fn worker(target: &Target, verbosity: Verbosity) -> Result<ExitCode, Error> {
+#[derive(Debug, clap::Args)]
+pub struct Args {
+    /// A test hook: continue each run as new once this many tasks have
+    /// finished in it, as if Temporal had suggested it
+    #[arg(long, hide = true)]
+    continue_as_new_after: Option<usize>,
+}
+
+pub async fn worker(args: Args, target: &Target, verbosity: Verbosity) -> Result<ExitCode, Error> {
+    if let Some(after) = args.continue_as_new_after {
+        let _ = CONTINUE_AS_NEW_AFTER.set(after);
+    }
     let temporal = target.connect().await?;
     temporal.register_search_attributes().await?;
     let runtime = Runtime::from_current_tokio(Default::default())

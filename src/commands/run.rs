@@ -66,6 +66,7 @@ pub async fn run(args: Args, target: &Target, verbosity: Verbosity) -> Result<Ex
         hash: definition.hash,
         input,
         directory,
+        resume: None,
     };
     let handle = temporal
         .client
@@ -86,6 +87,7 @@ pub async fn run(args: Args, target: &Target, verbosity: Verbosity) -> Result<Ex
     let mut progress = Progress {
         verbose: verbosity == Verbosity::Verbose,
         printed: Vec::new(),
+        chain: show::Chain::default(),
     };
     let quiet = verbosity == Verbosity::Quiet;
     let result = {
@@ -186,11 +188,13 @@ struct Progress {
     verbose: bool,
     /// The status last printed for each task, by its position in the run.
     printed: Vec<Status>,
+    /// The records of the runs before the latest, once it has continued as new.
+    chain: show::Chain,
 }
 
 impl Progress {
     async fn print(&mut self, handle: &WorkflowHandle<Client, Interpret>, run: &str) {
-        let Ok(tasks) = show::tasks(handle, run).await else {
+        let Ok(tasks) = self.chain.tasks(handle, run).await else {
             return;
         };
         for (index, task) in tasks.iter().enumerate() {

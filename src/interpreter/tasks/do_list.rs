@@ -18,6 +18,9 @@ pub async fn execute<H: Host>(
         .await;
     // Leaving the scope cancels anything still running in it.
     token.cancel();
+    if let Err(Halt::ContinueAsNew) = done {
+        interpreter.suspend_task(task);
+    }
     let done = done?;
     Ok(Outcome {
         output: done.output,

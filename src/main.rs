@@ -47,7 +47,7 @@ enum Command {
     /// Check a workflow definition without running it
     Validate(commands::validate::Args),
     /// Run the interpreter and the shell activity until interrupted
-    Worker,
+    Worker(commands::worker::Args),
     /// Run a shell step's command, and stop it when the worker's pipe closes
     #[command(hide = true)]
     Guard(commands::guard::Args),
@@ -74,7 +74,7 @@ async fn main() -> ExitCode {
         Command::Show(args) => commands::show::show(args, &cli.target, verbosity).await,
         Command::Cancel(args) => commands::cancel::cancel(args, &cli.target, verbosity).await,
         Command::Validate(args) => commands::validate::validate(args, verbosity),
-        Command::Worker => commands::worker::worker(&cli.target, verbosity).await,
+        Command::Worker(args) => commands::worker::worker(args, &cli.target, verbosity).await,
         Command::Guard(args) => commands::guard::guard(args).await,
     };
     result.unwrap_or_else(|error| {

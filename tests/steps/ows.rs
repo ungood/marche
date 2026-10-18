@@ -28,6 +28,7 @@ const SUPPORTED: &[&str] = &[
     "try",
     "wait",
     "fork",
+    "for",
 ];
 
 /// `do` comes last, because `for` tasks have a `do` too.
@@ -151,6 +152,14 @@ async fn running(world: &mut MarcheWorld, task: String) {
     });
     let started = started.await.expect("read marche run's output");
     assert!(started, "{task} didn't start");
+}
+
+/// Uses the worker's hidden test hook: it continues each run as new once that
+/// many tasks have finished in it, as if Temporal had suggested it.
+#[given(regex = r"^the worker continues runs as new after every (\d+) tasks$")]
+async fn continues_as_new(world: &mut MarcheWorld, tasks: String) {
+    world.services =
+        Some(Services::start_with(vec!["--continue-as-new-after".into(), tasks]).await);
 }
 
 #[when("the worker is killed and started again")]
@@ -321,6 +330,38 @@ fn runs_after(world: &mut MarcheWorld, second: String, first: String) {
         position(world, &first) < position(world, &second),
         "{second} didn't run after {first}"
     );
+}
+
+#[then(regex = r"^(\w+) should run (\d+) times?$")]
+fn runs_times(world: &mut MarcheWorld, name: String, count: usize) {
+    let runs = tasks(world)
+        .iter()
+        .filter(|task| task["name"] == name)
+        .count();
+    assert_eq!(runs, count, "{name} ran {runs} times");
+}
+
+#[then(regex = r"^the workflow should have continued as new (\d+) times?$")]
+async fn continued_as_new(world: &mut MarcheWorld, count: usize) {
+    let id = run(world)["run"].as_str().expect("the run has an ID");
+    let address = world.address();
+    // Every run in the chain has the workflow's ID, though visibility can take
+    // a moment to list the last one.
+    let mut runs = 0;
+    for _ in 0..50 {
+        let output = Command::new("temporal")
+            .args(["workflow", "list", "--address", &address, "-o", "json"])
+            .args(["--query", &format!("WorkflowId = '{id}'")])
+            .output()
+            .expect("run temporal workflow list");
+        let list: Value = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
+        runs = list.as_array().map_or(0, Vec::len);
+        if runs > count {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(runs, count + 1, "the workflow had {runs} Temporal runs");
 }
 
 #[then(regex = r"^(\w+) should (complete|fault|cancel)$")]
