@@ -3,6 +3,7 @@
 //! `SUPPORTED` in `tests/steps/ows.rs`.
 
 mod do_list;
+mod fork;
 mod raise;
 mod run;
 mod set;
@@ -23,6 +24,8 @@ pub async fn execute<H: Host>(
         raise::execute(task)
     } else if definition.get("switch").is_some() {
         switch::execute(task)
+    } else if definition.get("fork").is_some() {
+        fork::execute(interpreter, task).await
     } else if definition.get("run").is_some() {
         run::execute(interpreter, task).await
     } else if definition.get("do").is_some() {

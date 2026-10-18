@@ -19,7 +19,7 @@ static SCHEMA: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
 });
 
 /// Task types the interpreter runs. `run` is checked by process.
-const SUPPORTED_TASKS: &[&str] = &["do", "set", "run", "switch", "raise"];
+const SUPPORTED_TASKS: &[&str] = &["do", "set", "run", "switch", "raise", "fork"];
 /// `do` comes last, because `for` tasks have a `do` too.
 const TASK_TYPES: &[&str] = &[
     "call", "emit", "for", "fork", "listen", "raise", "run", "set", "switch", "try", "wait", "do",
@@ -204,6 +204,10 @@ fn check_list(list: &Value, path: &str, problems: &mut Vec<String>) {
         if kind == "do" {
             check_list(&task["do"], &format!("{reference}/do"), problems);
         }
+        if kind == "fork" {
+            let branches = &task["fork"]["branches"];
+            check_list(branches, &format!("{reference}/fork/branches"), problems);
+        }
     }
 }
 
@@ -253,6 +257,22 @@ mod tests {
             [
                 "/do/0/check/switch/1/blue has then: nowhere, but the switch's list has no task named nowhere."
             ]
+        );
+    }
+
+    #[test]
+    fn checks_fork_branches() {
+        let definition = json!({
+            "do": [
+                {"cook": {"fork": {"branches": [
+                    {"stir": {"set": {}}},
+                    {"pause": {"wait": {"seconds": 1}}},
+                ]}}},
+            ]
+        });
+        assert_eq!(
+            unsupported(&definition),
+            ["/do/0/cook/fork/branches/1/pause is a wait task, which marche doesn't support yet."]
         );
     }
 

@@ -106,6 +106,8 @@ Top-level features outside M1 are `use`, `schedule` and `evaluate.language` valu
 
 Data flows as the spec describes: `input.from`, `input.schema`, `output.as`, `output.schema` and `export.as` at both the workflow and task level, and `if` on every task. Expressions are jq, evaluated by jaq in `strict` mode, so in values such as `set`, shell arguments and `environment`, only `${ }` strings are expressions. Fields whose whole value is an expression (`if`, `input.from`, `output.as` and `export.as`) also accept jq without the `${ }`, as the conformance kit writes them.
 
+In a `fork`, a branch's `export.as` replaces `$context` when that branch finishes, so tasks still running in other branches see it from then on, and when several branches export, the last to finish wins. That order replays identically but depends on timing, so a definition that needs every branch's result should read the fork's output instead.
+
 Expressions see the spec's arguments: `$context`, `$input`, `$output`, `$workflow`, `$runtime` and `$task`, plus the `for` and `catch` variables. jaq's impure builtins are removed: `now`, `env`, `$ENV`, `input`, `inputs`, `debug`, `stderr`, `halt`, `halt_error`, and `localtime` and `strflocaltime`, which read the machine's time zone. An expression that uses one faults with an `expression` error that says why. Values that depend on the outside world come from arguments recorded once:
 
 - `$workflow.startedAt` and `$task.startedAt` come from Temporal's workflow clock, which replays identically.
@@ -134,6 +136,8 @@ marche follows the statechart rule: leaving a `do`, `fork` or `try` scope cancel
 - the other branches of a `fork` when one faults;
 - the running iterations of a parallel `for` with `cancelOnFailure`;
 - `marche cancel`, which leaves the outermost scope.
+
+Among concurrent branches, the first to fault or complete is the first whose result the interpreter sees, in the order Temporal delivers them, so it's the same on replay. Cancelled branches and the tasks they were running are recorded as `cancelled`.
 
 A cancelled shell step learns of the cancellation through its next heartbeat. The activity sends SIGTERM to the step's process group, waits ten seconds, and then sends SIGKILL. The interpreter waits for activities to confirm they've stopped before the scope finishes, so nothing a cancelled run started is still running when `marche cancel` returns.
 

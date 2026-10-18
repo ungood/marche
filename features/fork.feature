@@ -12,7 +12,6 @@ Feature: Fork
   cancelled. A cancelled branch's shell steps are stopped, and the branch is
   reported as cancelled.
 
-  @wip
   Scenario: Branches run together, and the output keeps their order
     Given a workflow with definition:
       """yaml
@@ -47,7 +46,6 @@ Feature: Fork
       """
     And sauce should run before rice
 
-  @wip
   Scenario: A faulting branch cancels the others
     Given a workflow with definition:
       """yaml
@@ -83,7 +81,6 @@ Feature: Fork
     And cook should fault
     And the process whose ID is in "simmer.pid" has exited
 
-  @wip
   Scenario: With compete, the losing branch's process is killed
     Given a workflow with definition:
       """yaml

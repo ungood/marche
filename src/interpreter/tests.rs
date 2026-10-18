@@ -1,6 +1,8 @@
 //! Interpreter tests against a fake host.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::task::Poll;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::FutureExt;
@@ -18,6 +20,10 @@ struct FakeHost {
     requests: RefCell<Vec<ShellRequest>>,
     results: RefCell<Vec<ShellResult>>,
     timers: RefCell<Vec<Duration>>,
+    /// How long shell steps take, by command, for steps that run concurrently:
+    /// `Some(n)` finishes after yielding `n` times, and `None` runs until it's
+    /// cancelled. Other steps finish at once.
+    steps: RefCell<BTreeMap<String, Option<usize>>>,
 }
 
 impl Host for FakeHost {
@@ -32,10 +38,10 @@ impl Host for FakeHost {
     }
 
     fn task_finished(&self, reference: &str, result: &Result<Value, Halt>) {
-        let status = if result.is_ok() {
-            "completed"
-        } else {
-            "faulted"
+        let status = match result {
+            Ok(_) => "completed",
+            Err(Halt::Fault(_)) => "faulted",
+            Err(Halt::Cancelled) => "cancelled",
         };
         self.events
             .borrow_mut()
@@ -47,13 +53,31 @@ impl Host for FakeHost {
         request: ShellRequest,
         token: &Token,
     ) -> LocalBoxFuture<'_, Result<ShellResult, Halt>> {
+        let step = self.steps.borrow().get(&request.command).copied();
         self.requests.borrow_mut().push(request);
-        let result = if token.is_cancelled() {
-            Err(Halt::Cancelled)
-        } else {
-            Ok(self.results.borrow_mut().remove(0))
+        let token = token.clone();
+        if token.is_cancelled() {
+            return async { Err(Halt::Cancelled) }.boxed_local();
+        }
+        let Some(step) = step else {
+            let result = self.results.borrow_mut().remove(0);
+            return async { Ok(result) }.boxed_local();
         };
-        async move { result }.boxed_local()
+        let result = step.map(|_| self.results.borrow_mut().remove(0));
+        async move {
+            let Some(yields) = step else {
+                token.cancelled().await;
+                return Err(Halt::Cancelled);
+            };
+            for _ in 0..yields {
+                yield_now().await;
+                if token.is_cancelled() {
+                    return Err(Halt::Cancelled);
+                }
+            }
+            Ok(result.expect("a result for the step"))
+        }
+        .boxed_local()
     }
 
     /// Timers fire at once, unless cancelled first.
@@ -74,6 +98,21 @@ impl Host for FakeHost {
     fn continue_as_new_suggested(&self) -> bool {
         false
     }
+}
+
+/// Lets other futures run once, as a step that takes a while does.
+async fn yield_now() {
+    let mut yielded = false;
+    futures::future::poll_fn(|cx| {
+        if yielded {
+            Poll::Ready(())
+        } else {
+            yielded = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    })
+    .await;
 }
 
 fn run(host: &FakeHost, definition: &str, input: Value) -> Result<Value, Halt> {
@@ -481,4 +520,247 @@ fn review_loop_ends_when_the_review_passes() {
         json!({}),
     );
     assert_eq!(output, Ok(json!({"attempt": 2, "passed": true})));
+}
+
+/// A fork of shell steps, each branch named after its command.
+fn fork(compete: bool, commands: &[&str]) -> String {
+    let branches: String = commands
+        .iter()
+        .map(|command| {
+            format!(
+                "          - {command}:\n              run:\n                shell:\n                  command: {command}\n"
+            )
+        })
+        .collect();
+    format!(
+        "do:\n  - cook:\n      fork:\n        compete: {compete}\n        branches:\n{branches}"
+    )
+}
+
+/// Makes each command a step that takes that many yields, or runs until cancelled.
+fn steps(host: &FakeHost, steps: &[(&str, Option<usize>)]) {
+    for (command, step) in steps {
+        host.steps.borrow_mut().insert(command.to_string(), *step);
+    }
+}
+
+#[test]
+fn fork_output_keeps_declared_order() {
+    let host = FakeHost::default();
+    steps(&host, &[("sauce", Some(3)), ("rice", Some(1))]);
+    host.results.borrow_mut().push(exited(0, "sauce", ""));
+    host.results.borrow_mut().push(exited(0, "rice", ""));
+    let output = run(&host, &fork(false, &["sauce", "rice"]), json!({}));
+    assert_eq!(output, Ok(json!(["sauce", "rice"])));
+    assert_eq!(
+        *host.events.borrow(),
+        [
+            "started /do/0/cook",
+            "started /do/0/cook/fork/branches/0/sauce",
+            "started /do/0/cook/fork/branches/1/rice",
+            "completed /do/0/cook/fork/branches/1/rice",
+            "completed /do/0/cook/fork/branches/0/sauce",
+            "completed /do/0/cook",
+        ]
+    );
+}
+
+#[test]
+fn fork_branches_get_the_fork_input() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - cook:
+      fork:
+        branches:
+          - salt:
+              set:
+                dish: ${ .dish + " with salt" }
+          - pepper:
+              set:
+                dish: ${ .dish + " with pepper" }
+"#,
+        json!({"dish": "soup"}),
+    );
+    assert_eq!(
+        output,
+        Ok(json!([{"dish": "soup with salt"}, {"dish": "soup with pepper"}]))
+    );
+}
+
+#[test]
+fn a_faulting_branch_cancels_its_siblings() {
+    let host = FakeHost::default();
+    steps(&host, &[("simmer", None), ("burn", Some(1))]);
+    host.results.borrow_mut().push(exited(3, "", "burnt\n"));
+    let output = run(&host, &fork(false, &["simmer", "burn"]), json!({}));
+    let Err(Halt::Fault(error)) = output else {
+        panic!("expected a fault: {output:?}")
+    };
+    assert_eq!(
+        error.instance.as_deref(),
+        Some("/do/0/cook/fork/branches/1/burn")
+    );
+    assert_eq!(
+        *host.events.borrow(),
+        [
+            "started /do/0/cook",
+            "started /do/0/cook/fork/branches/0/simmer",
+            "started /do/0/cook/fork/branches/1/burn",
+            "faulted /do/0/cook/fork/branches/1/burn",
+            "cancelled /do/0/cook/fork/branches/0/simmer",
+            "faulted /do/0/cook",
+        ]
+    );
+}
+
+#[test]
+fn the_first_branch_to_fault_gives_the_error() {
+    let host = FakeHost::default();
+    steps(&host, &[("burn", Some(2)), ("spill", Some(1))]);
+    host.results.borrow_mut().push(exited(3, "", ""));
+    host.results.borrow_mut().push(exited(4, "", ""));
+    let output = run(&host, &fork(false, &["burn", "spill"]), json!({}));
+    let Err(Halt::Fault(error)) = output else {
+        panic!("expected a fault: {output:?}")
+    };
+    assert_eq!(
+        error.instance.as_deref(),
+        Some("/do/0/cook/fork/branches/1/spill")
+    );
+    assert!(
+        host.events
+            .borrow()
+            .contains(&"cancelled /do/0/cook/fork/branches/0/burn".to_string())
+    );
+}
+
+#[test]
+fn with_compete_the_first_branch_to_complete_wins() {
+    let host = FakeHost::default();
+    steps(
+        &host,
+        &[("slow", Some(3)), ("fast", Some(1)), ("stuck", None)],
+    );
+    host.results.borrow_mut().push(exited(0, "slow", ""));
+    host.results.borrow_mut().push(exited(0, "fast", ""));
+    let output = run(&host, &fork(true, &["slow", "fast", "stuck"]), json!({}));
+    assert_eq!(output, Ok(json!("fast")));
+    assert_eq!(
+        *host.events.borrow(),
+        [
+            "started /do/0/cook",
+            "started /do/0/cook/fork/branches/0/slow",
+            "started /do/0/cook/fork/branches/1/fast",
+            "started /do/0/cook/fork/branches/2/stuck",
+            "completed /do/0/cook/fork/branches/1/fast",
+            "cancelled /do/0/cook/fork/branches/2/stuck",
+            "cancelled /do/0/cook/fork/branches/0/slow",
+            "completed /do/0/cook",
+        ]
+    );
+}
+
+#[test]
+fn a_branch_that_completes_at_once_wins_before_the_others_start() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - pick:
+      fork:
+        compete: true
+        branches:
+          - red:
+              set:
+                color: red
+          - green:
+              set:
+                color: green
+"#,
+        json!({}),
+    );
+    assert_eq!(output, Ok(json!({"color": "red"})));
+    assert_eq!(
+        *host.events.borrow(),
+        [
+            "started /do/0/pick",
+            "started /do/0/pick/fork/branches/0/red",
+            "completed /do/0/pick/fork/branches/0/red",
+            "started /do/0/pick/fork/branches/1/green",
+            "cancelled /do/0/pick/fork/branches/1/green",
+            "completed /do/0/pick",
+        ]
+    );
+}
+
+#[test]
+fn a_cancelled_branch_cancels_its_running_children() {
+    let host = FakeHost::default();
+    steps(&host, &[("stuck", None), ("fast", Some(1))]);
+    host.results.borrow_mut().push(exited(0, "fast", ""));
+    let output = run(
+        &host,
+        r#"
+do:
+  - race:
+      fork:
+        compete: true
+        branches:
+          - slow:
+              do:
+                - wait:
+                    run:
+                      shell:
+                        command: stuck
+                - never:
+                    set: {}
+          - quick:
+              run:
+                shell:
+                  command: fast
+"#,
+        json!({}),
+    );
+    assert_eq!(output, Ok(json!("fast")));
+    let events = host.events.borrow();
+    for event in [
+        "cancelled /do/0/race/fork/branches/0/slow/do/0/wait",
+        "cancelled /do/0/race/fork/branches/0/slow",
+    ] {
+        assert!(events.contains(&event.to_string()), "{event}: {events:?}");
+    }
+    assert!(!events.iter().any(|event| event.ends_with("/never")));
+}
+
+#[test]
+fn cancelling_the_run_cancels_every_branch() {
+    let host = FakeHost::default();
+    steps(&host, &[("simmer", None), ("stew", None)]);
+    let definition: Value = serde_yaml_ng::from_str(&fork(false, &["simmer", "stew"])).unwrap();
+    let mut interpreter = Interpreter::new(&host, definition, "test.run-1", "/work");
+    let token = Token::new();
+    let cancel = async {
+        yield_now().await;
+        token.cancel();
+    };
+    let (output, ()) = futures::executor::block_on(futures::future::join(
+        interpreter.run(json!({}), &token),
+        cancel,
+    ));
+    assert_eq!(output, Err(Halt::Cancelled));
+    assert_eq!(
+        *host.events.borrow(),
+        [
+            "started /do/0/cook",
+            "started /do/0/cook/fork/branches/0/simmer",
+            "started /do/0/cook/fork/branches/1/stew",
+            "cancelled /do/0/cook/fork/branches/0/simmer",
+            "cancelled /do/0/cook/fork/branches/1/stew",
+            "cancelled /do/0/cook",
+        ]
+    );
 }

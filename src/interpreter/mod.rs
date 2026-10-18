@@ -30,7 +30,6 @@ use futures::FutureExt;
 use futures::future::LocalBoxFuture;
 use serde_json::{Value, json};
 pub use temporalio_sdk::WorkflowCancellationToken as Token;
-#[allow(unused_imports)]
 pub(crate) use temporalio_sdk::workflows::join_all;
 
 use crate::expr::{self, Scope};
