@@ -256,7 +256,7 @@ Feature: Shell steps
         - simmer:
             run:
               shell:
-                command: sleep 60 & echo $! > simmer.tmp && mv simmer.tmp simmer.pid; wait
+                command: sleep 300 & echo $! > simmer.tmp && mv simmer.tmp simmer.pid; wait
       """
     And the workflow is running its simmer task
     And the workflow has written the file "simmer.pid"
