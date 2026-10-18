@@ -167,3 +167,31 @@ Feature: marche status
       No worker is serving the task queue elsewhere, so marche can't read the tasks of tools.three-01JAB3K4Z7Y8X9W0V1T2S3R4Q8.
       Start one with `marche worker`.
       """
+
+  Scenario: A run that continued as new has the status of its last run
+    Given the worker continues runs as new after every 1 tasks
+    And the file "courses.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: courses
+        version: '0.1.0'
+      do:
+        - soup:
+            set:
+              course: soup
+        - fish:
+            set:
+              course: fish
+        - cake:
+            set:
+              course: cake
+      """
+    And "courses.yaml" has run
+    When I run "marche status --json"
+    Then the command succeeds
+    And the JSON output contains:
+      """json
+      {"run": "$RUN", "definition": "examples.courses:0.1.0", "status": "completed", "running": []}
+      """

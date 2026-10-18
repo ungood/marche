@@ -250,3 +250,29 @@ Feature: Expressions and data flow
       title: Expression failed
       instance: /do/0/divide
       """
+
+  Scenario: $runtime has marche's version and the run's directory
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: runtime
+        version: '0.1.0'
+      do:
+        - where:
+            run:
+              shell:
+                command: test "$1" = "$(pwd -P)" && echo "the directory marche run was started in"
+                arguments:
+                  - ${ $runtime.metadata.directory }
+            output:
+              as: '${ { directory: ., version: $runtime.version } }'
+      """
+    When the workflow is executed
+    Then the workflow should complete
+    And the workflow output should have a 'directory' property with value:
+      """yaml
+      the directory marche run was started in
+      """
+    And the workflow output's 'version' property is marche's version

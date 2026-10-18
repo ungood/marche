@@ -144,3 +144,31 @@ Feature: marche list
       """
       No runs were started from this directory. `marche list --all` lists every run.
       """
+
+  Scenario: A run that continued as new is listed once
+    Given the worker continues runs as new after every 1 tasks
+    And the file "courses.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: courses
+        version: '0.1.0'
+      do:
+        - soup:
+            set:
+              course: soup
+        - fish:
+            set:
+              course: fish
+        - cake:
+            set:
+              course: cake
+      """
+    And "courses.yaml" has run
+    When I run "marche list --json"
+    Then the command succeeds
+    And the JSON output contains:
+      """json
+      {"runs": [{"run": "$RUN", "definition": "examples.courses:0.1.0", "status": "completed"}]}
+      """

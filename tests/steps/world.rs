@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
-use std::process::{Child, Output};
+use std::process::Output;
 
 use cucumber::World;
 use serde_json::Value;
 use tempfile::TempDir;
+use tokio::process::Child;
+use tokio::task::JoinHandle;
 
 use super::services::Services;
 
@@ -24,14 +26,23 @@ pub struct MarcheWorld {
     /// A server and worker of the scenario's own, for scenarios that kill the worker.
     pub services: Option<Services>,
     /// A `marche run --json` still in progress.
-    pub pending: Option<Child>,
+    pub pending: Option<Pending>,
     /// Environment variables from `the environment variable ... is ...`.
     pub env: Vec<(String, String)>,
-    /// The ID of the run started last by `has run` or `is running`.
+    /// The ID of the run started last by `has run`, `is running`, or `the
+    /// workflow is running`.
     pub run_id: Option<String>,
     /// How long `the workflow is executed` took, or how long the run took to
     /// stop after `the workflow is cancelled`.
     pub took: Option<std::time::Duration>,
+}
+
+/// A `marche run --json` started in the background, and everything it has
+/// printed on standard error, which a task reads so the pipe never fills.
+#[derive(Debug)]
+pub struct Pending {
+    pub child: Child,
+    pub stderr: JoinHandle<String>,
 }
 
 impl MarcheWorld {
@@ -58,8 +69,8 @@ impl MarcheWorld {
     /// Kills a run still in progress, and stops the scenario's own server and worker.
     pub fn stop(&mut self) {
         if let Some(mut run) = self.pending.take() {
-            let _ = run.kill();
-            let _ = run.wait();
+            // Tokio reaps it in the background.
+            let _ = run.child.start_kill();
         }
         self.services = None;
     }
@@ -80,10 +91,10 @@ impl MarcheWorld {
     }
 
     /// The address of the scenario's own server, or else the shared one.
-    pub fn address(&self) -> String {
+    pub async fn address(&self) -> String {
         match &self.services {
             Some(services) => services.address.clone(),
-            None => super::services::address(),
+            None => super::services::shared().await.0,
         }
     }
 

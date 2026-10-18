@@ -37,11 +37,11 @@ async fn worker_started_with(world: &mut MarcheWorld, command: String) {
 }
 
 #[when(regex = r#"^I run "(.+)"$"#)]
-fn i_run(world: &mut MarcheWorld, command: String) {
+async fn i_run(world: &mut MarcheWorld, command: String) {
     let words = shell_words::split(&world.expand(&command)).expect("the command splits into words");
     let (program, args) = words.split_first().expect("the command isn't empty");
     assert_eq!(program, "marche", "commands start with marche");
-    let mut run = std::process::Command::new(marche());
+    let mut run = tokio::process::Command::new(marche());
     // Temporal's settings come only from the scenario.
     for (name, _) in std::env::vars().filter(|(name, _)| name.starts_with("TEMPORAL_")) {
         run.env_remove(name);
@@ -55,10 +55,10 @@ fn i_run(world: &mut MarcheWorld, command: String) {
         .first()
         .is_some_and(|command| TEMPORAL_COMMANDS.contains(&command.as_str()))
     {
-        run.env("TEMPORAL_ADDRESS", world.address());
+        run.env("TEMPORAL_ADDRESS", world.address().await);
     }
     run.envs(world.env.iter().map(|(name, value)| (name, value)));
-    world.last = Some(run.output().expect("run marche"));
+    world.last = Some(run.output().await.expect("run marche"));
 }
 
 fn describe(world: &MarcheWorld) -> String {
@@ -122,26 +122,50 @@ fn says(world: &MarcheWorld, actual: &[u8], step: &Step, what: &str) {
     }
 }
 
+/// Checks that the doc string's lines appear in the text in their order, each
+/// after the one before.
+fn says_in_order(world: &MarcheWorld, actual: &[u8], step: &Step, what: &str) {
+    let actual = plain(actual);
+    let mut rest = actual.as_str();
+    for line in lines(world, step) {
+        let Some(found) = rest.find(&line) else {
+            panic!("{what} doesn't say {line:?} after the lines before it:\n{actual}");
+        };
+        rest = &rest[found + line.len()..];
+    }
+}
+
 #[then("the output says:")]
 fn output_says(world: &mut MarcheWorld, step: &Step) {
     says(world, &world.last().stdout, step, "the output");
 }
 
+#[then("the output says, in order:")]
+fn output_says_in_order(world: &mut MarcheWorld, step: &Step) {
+    says_in_order(world, &world.last().stdout, step, "the output");
+}
+
 /// The version `git describe` gives this checkout, without the tag's `v`, or
 /// Cargo.toml's placeholder when there's no release tag to describe.
-#[then("the output is marche's version")]
-fn output_is_version(world: &mut MarcheWorld) {
-    let described = std::process::Command::new("git")
+pub async fn marche_version() -> String {
+    let described = tokio::process::Command::new("git")
         .args(["describe", "--tags", "--match", "v[0-9]*"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
+        .await
         .ok()
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
-    let version = described
+    described
         .as_deref()
         .and_then(|tag| tag.strip_prefix('v'))
-        .unwrap_or(env!("CARGO_PKG_VERSION"));
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string()
+}
+
+#[then("the output is marche's version")]
+async fn output_is_version(world: &mut MarcheWorld) {
+    let version = marche_version().await;
     let output = String::from_utf8_lossy(&world.last().stdout);
     assert_eq!(output.trim(), format!("marche {version}"));
 }
@@ -178,6 +202,14 @@ fn prints(world: &mut MarcheWorld, step: &Step) {
     says(world, &both, step, "marche");
 }
 
+/// Standard error comes first, so task lines read in order before the output.
+#[then("marche prints, in order:")]
+fn prints_in_order(world: &mut MarcheWorld, step: &Step) {
+    let output = world.last();
+    let both = [output.stderr.as_slice(), output.stdout.as_slice()].concat();
+    says_in_order(world, &both, step, "marche");
+}
+
 #[then("marche doesn't print:")]
 fn doesnt_print(world: &mut MarcheWorld, step: &Step) {
     let output = world.last();
@@ -188,7 +220,7 @@ fn doesnt_print(world: &mut MarcheWorld, step: &Step) {
 }
 
 #[then("the worker prints:")]
-fn worker_prints(world: &mut MarcheWorld, step: &Step) {
+async fn worker_prints(world: &mut MarcheWorld, step: &Step) {
     let services = world
         .services
         .as_ref()
@@ -196,7 +228,8 @@ fn worker_prints(world: &mut MarcheWorld, step: &Step) {
     // The worker's output reaches the log through a pipe, a moment later.
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let log = plain(services.log.lock().expect("worker log lock").as_bytes());
+        let log = services.log.lock().expect("worker log lock").clone();
+        let log = plain(log.as_bytes());
         let missing = lines(world, step)
             .into_iter()
             .find(|line| !log.contains(line));
@@ -205,7 +238,7 @@ fn worker_prints(world: &mut MarcheWorld, step: &Step) {
             Some(line) if Instant::now() >= deadline => {
                 panic!("the worker doesn't print {line:?}:\n{log}")
             }
-            Some(_) => std::thread::sleep(Duration::from_millis(100)),
+            Some(_) => tokio::time::sleep(Duration::from_millis(100)).await,
         }
     }
 }

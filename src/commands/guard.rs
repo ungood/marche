@@ -222,17 +222,31 @@ mod tests {
 
     #[tokio::test]
     async fn stopping_terminates_the_whole_group() {
-        let child = start("sleep 60 & wait");
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "sleep 60 & echo ready; wait $!"])
+            .stdout(std::process::Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
         let group = child.id().unwrap() as libc::pid_t;
+        // Wait until sleep has started, so there's more than sh to stop.
+        let mut ready = [0; 6];
+        tokio::io::AsyncReadExt::read_exact(child.stdout.as_mut().unwrap(), &mut ready)
+            .await
+            .unwrap();
         let status = supervise(child, async {}, TERMINATION_GRACE).await.unwrap();
-        assert_eq!(status.signal(), Some(libc::SIGTERM));
+        // killpg signals the group's processes one at a time, so sh can see
+        // sleep die and exit as it did before its own signal lands.
+        let terminated =
+            status.signal() == Some(libc::SIGTERM) || status.code() == Some(128 + libc::SIGTERM);
+        assert!(terminated, "{status:?}");
         assert!(!running(group));
     }
 
     #[tokio::test]
     async fn a_group_that_ignores_sigterm_is_killed_after_the_grace_period() {
         let mut child = Command::new("/bin/sh")
-            .args(["-c", "trap '' TERM; sleep 60 & echo ready; wait"])
+            .args(["-c", "trap '' TERM; sleep 60 & echo ready; wait $!"])
             .stdout(std::process::Stdio::piped())
             .process_group(0)
             .spawn()
@@ -247,8 +261,16 @@ mod tests {
         let status = supervise(child, async {}, Duration::from_millis(500))
             .await
             .unwrap();
-        assert_eq!(status.signal(), Some(libc::SIGKILL));
+        // As above, sh can see sleep die and exit before its own SIGKILL lands.
+        let killed =
+            status.signal() == Some(libc::SIGKILL) || status.code() == Some(128 + libc::SIGKILL);
+        assert!(killed, "{status:?}");
         assert!(started.elapsed() >= Duration::from_millis(500));
+        // After SIGKILL, the guard doesn't wait for the rest of the group to go.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while running(group) && Instant::now() < deadline {
+            tokio::time::sleep(POLL).await;
+        }
         assert!(!running(group));
     }
 }
