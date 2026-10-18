@@ -24,6 +24,7 @@ Setup:
 - `the environment variable "<name>" is "<value>"` sets a variable for `I run`, after the ones above.
 - `Temporal's configuration file says:` with TOML as a doc string, written to the file `TEMPORAL_CONFIG_FILE` names.
 - `a worker started with "marche worker <flags>"` starts the scenario's own server, and a worker with those flags.
+- `the worker continues runs as new after every <n> tasks` gives the scenario a server and worker of its own. The worker continues each run as new once `<n>` tasks have finished in it, through the hidden test hook `marche worker --continue-as-new-after <n>`.
 
 Action:
 
@@ -54,6 +55,11 @@ The kit's steps are defined in its [README](https://github.com/open-workflow-spe
 - `the workflow should complete`, `should fault`, `should cancel`, and `should complete with output:` or `should fault with error:`. Expected errors match when every field given appears in the actual error.
 - `the workflow output should have properties '<path>', ...`, `should have a '<path>' property with value:`, `should have a '<path>' property containing <n> items`, with dotted paths.
 - `<task> should run first`, `run last`, `run before <task>`, `run after <task>`, by the order tasks started.
-- `<task> should complete`, `fault`, `cancel`, `complete with output:`, `fault with error:`.
+- `<task> should complete`, `fault`, `cancel`, `complete with output:`, `fault with error:`. When a task ran more than once, as a loop's tasks do, these check the first time it started.
+
+marche adds steps of its own that read the same results:
+
+- `<task> should run <n> times` counts the tasks of that name that started.
+- `the workflow should have continued as new <n> times` counts the Temporal runs with the workflow's ID, which is one more than the times it continued as new.
 
 A kit scenario runs only when every task type in its definition is in `SUPPORTED` in `tests/steps/ows.rs`. Add a task type there when the interpreter supports it.
