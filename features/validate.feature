@@ -440,7 +440,6 @@ Feature: marche validate
       """
     And the error points at line 11 of "detach.yaml"
 
-  @wip
   Scenario: Schema problems and marche's own are reported together
     Given the file "both.yaml":
       """yaml
