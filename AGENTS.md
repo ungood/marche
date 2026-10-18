@@ -21,6 +21,10 @@ Skills live in `.agents/skills/`. `.claude/skills` is a symlink to that director
 - `tests/cucumber.rs`: the single cucumber-rs runner, for `features/` and the conformance kit.
 - `tests/steps/`: step definitions. `ows.rs` implements the kit's steps and lists the supported task types. `services.rs` starts the Temporal dev server and worker.
 - `tests/examples.rs`: validates `examples/`.
+- `src/main.rs`: the CLI arguments and dispatch. Each command is in `src/commands/`.
+- `src/error.rs`: every error marche prints. Their wording is spec, so keep it in step with `features/`.
+- `src/interpreter.rs`: the deterministic OWS interpreter, written against the `Host` trait. `src/workflow.rs` is the Temporal workflow `marche.interpret` that implements it, and `src/shell.rs` is the `marche.shell` activity.
+- `src/expr.rs`: jq expressions through jaq, without its impure builtins. `src/definition.rs`: loading a definition and the checks `marche run` makes.
 
 ## Conventions
 

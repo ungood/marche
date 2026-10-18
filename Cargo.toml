@@ -10,17 +10,23 @@ repository = "https://github.com/ungood/marche"
 [dependencies]
 clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
 console = "0.16.6"
+futures = "0.3"
 jaq-core = "3.1"
 jaq-json = "2.0"
 jaq-std = "3.0"
+jiff = "0.2"
 jsonschema = "0.59"
+libc = "0.2"
 miette = { version = "7.6", features = ["fancy"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10.0"
 sha2 = "0.11"
 temporalio-client = "1.1"
+temporalio-common = "1.1"
+temporalio-macros = "1.1"
 temporalio-sdk = { version = "1.1", default-features = false, features = ["envconfig"] }
+temporalio-workflow = "1.1"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "process", "rt-multi-thread", "signal"] }
 ulid = "3"
@@ -28,8 +34,10 @@ ulid = "3"
 [dev-dependencies]
 cucumber = "0.23"
 jsonschema = "0.59"
+libc = "0.2"
 serde_json = "1"
 serde_yaml_ng = "0.10.0"
+shell-words = "1"
 strip-ansi-escapes = "0.2"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "process", "rt-multi-thread", "sync", "time"] }

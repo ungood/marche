@@ -104,9 +104,9 @@ Top-level features outside M1 are `use`, `schedule` and `evaluate.language` valu
 
 ### Data flow
 
-Data flows as the spec describes: `input.from`, `input.schema`, `output.as`, `output.schema` and `export.as` at both the workflow and task level, and `if` on every task. Expressions are jq, evaluated by jaq in `strict` mode, so only `${ }` strings are expressions.
+Data flows as the spec describes: `input.from`, `input.schema`, `output.as`, `output.schema` and `export.as` at both the workflow and task level, and `if` on every task. Expressions are jq, evaluated by jaq in `strict` mode, so in values such as `set`, shell arguments and `environment`, only `${ }` strings are expressions. Fields whose whole value is an expression (`if`, `input.from`, `output.as` and `export.as`) also accept jq without the `${ }`, as the conformance kit writes them.
 
-Expressions see the spec's arguments: `$context`, `$input`, `$output`, `$workflow`, `$runtime` and `$task`, plus the `for` and `catch` variables. jaq's impure builtins are removed: `now`, `env`, `$ENV`, `input`, `inputs`, `debug`, `stderr`, `halt` and `halt_error`. Values that depend on the outside world come from arguments recorded once:
+Expressions see the spec's arguments: `$context`, `$input`, `$output`, `$workflow`, `$runtime` and `$task`, plus the `for` and `catch` variables. jaq's impure builtins are removed: `now`, `env`, `$ENV`, `input`, `inputs`, `debug`, `stderr`, `halt`, `halt_error`, and `localtime` and `strflocaltime`, which read the machine's time zone. An expression that uses one faults with an `expression` error that says why. Values that depend on the outside world come from arguments recorded once:
 
 - `$workflow.startedAt` and `$task.startedAt` come from Temporal's workflow clock, which replays identically.
 - `$runtime` is `{"name": "marche", "version": <version>, "metadata": {"directory": <invoking directory>}}`.
@@ -147,7 +147,7 @@ A `run: shell` step runs `/bin/sh -c <command> sh <arguments...>`, so `$1`, `$2`
 - **Standard input:** `stdin` if set, otherwise empty.
 - **Output:** `return` works as the spec says, defaulting to `stdout`. Standard output and error are text with one trailing newline removed, like `$(...)` in a shell. `all` returns `{"code", "stdout", "stderr"}`.
 - **Exit code:** with `return: code` or `return: all`, the exit code is data and a non-zero code doesn't fault the step. With any other `return`, a non-zero code raises an error.
-- **Crashes:** a step's process group dies with the worker, and Temporal retries the activity on the next worker. Long steps should therefore be idempotent.
+- **Crashes:** a step's process group dies with the worker, and Temporal retries the activity on the next worker once the step's heartbeats stop, after ten seconds. Long steps should therefore be idempotent. A worker that stops on SIGINT or SIGTERM kills its steps' groups itself. A worker killed with SIGKILL can't, and macOS has no parent-death signal, so each step will run under a small guard process, `marche` itself, that holds one end of a pipe from the worker and kills the step's group when the pipe closes.
 - **`await: false`:** not supported in M1, because a detached process would outlive the run's cancellation rule.
 
 ### Limits
@@ -156,6 +156,7 @@ Temporal payloads are limited to 2 MB, and a workflow's history to about 50,000 
 
 - Standard output and error are capped at 256 KiB each in the step's result, keeping the end of the stream. The full streams always go to `~/.local/state/marche/runs/<run>/<reference>/<attempt>.stdout` and `.stderr`, and `marche show` prints their paths.
 - When Temporal suggests it, the interpreter continues as new at the next point where no tasks are in flight, carrying the definition, the current position, the context and the current data. A long sequential `for` or a `switch` loop can therefore run indefinitely.
+- That state is small: the example definitions are 230 to 663 bytes as JSON, a position is a list of indexes, and the context and current data are whatever the workflow keeps, which the payload limit bounds. The task records `marche show` reads aren't carried, because they grow with every task and each holds its output, up to 512 KiB for a shell step's two streams. They stay with the Temporal run that recorded them, and `marche show` follows the chain of runs.
 
 ## Extension: parallel for
 
@@ -203,6 +204,21 @@ A runtime that doesn't know the extension ignores `metadata`, as the spec requir
 ### Upstream
 
 As a proposal, the same settings would move into the `for` object itself, as `for.parallel`, `for.maxConcurrency` and `for.cancelOnFailure`, which matches how Amazon States Language's `Map` and Argo's `parallelism` describe the same thing. marche would then accept both spellings.
+
+## Temporal's Rust SDK
+
+marche uses `temporalio-sdk` 1.x. The M1 spike settled how the design maps onto it.
+
+- **Workflow and activity:** `marche.interpret` and `marche.shell` are the `name` overrides on `#[run]` and `#[activity]`. The workflow's input is `{definition, hash, input, directory}`, and its output is the workflow output. A faulted run fails the workflow with a non-retryable application failure whose type is the OWS error's `type` and whose details are the error object, so `marche run` can print it. A cancelled run ends the workflow as cancelled.
+- **Task records:** the workflow keeps a record of each task it starts, with its status, output, error and log, and answers the query `tasks` with them. Temporal answers queries on closed runs by replaying them on a worker, so `marche show` works after a run ends, and `marche run` polls the same query to print progress.
+- **The interpreter:** it's written against a small host interface (the workflow clock, task records and shell steps), which the workflow implements with its context. Unit tests drive it with a fake host. Workflow futures aren't `Send`, so the recursive walk over task lists uses local boxed futures.
+- **Cancellation scopes:** `WorkflowCancellationToken` is the scope. Each `do`, `fork` and `try` takes a `child_token()` of its parent's, and passes it to the activities and timers it starts through their options' `cancellation_token`. Cancelling the token cancels everything under it, and the workflow's root token is cancelled when the run is. A token made with `WorkflowCancellationToken::new()` is detached, for cleanup that must run anyway.
+- **Waiting for cancellation:** `ActivityCancellationType::WaitCancellationCompleted` makes a cancelled activity's future resolve only after the activity has confirmed it stopped, which is what `marche cancel` needs. Shell steps use it. Concurrent branches use the SDK's deterministic `select!`, `join!` and `join_all`, never tokio's or futures'.
+- **Continue-as-new:** `continue_as_new_suggested()` reads the server's suggestion from the current activation, and `history_length()` gives the event count. `continue_as_new(input, options)` returns an error that the workflow propagates to end the run.
+- **Randomness:** `random::<T>()` draws from Temporal's seeded generator, and `random_stream(name)` gives a named stream that other draws don't disturb. Retry jitter draws from its own stream, `marche.jitter`.
+- **Time:** `workflow_time()` is the replay-safe clock behind `$workflow.startedAt` and `$task.startedAt`.
+- **Shell steps:** a step heartbeats every second with a ten-second timeout, and gets three attempts for worker loss. A non-zero exit is data that the interpreter turns into an error, not an activity failure, so it's never retried as infrastructure. A command that can't start fails the activity with a non-retryable `runtime` error.
+- **jaq:** the impure builtins are left out by filtering `jaq_std::defs()` and `funs()` by name before compiling. `input` and `inputs` only exist when the host supplies inputs, and `$ENV` only when it's declared, so marche declares neither.
 
 ## Examples
 
