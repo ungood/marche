@@ -82,11 +82,13 @@ pub fn marche() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_marche"))
 }
 
-/// Text with colors removed and runs of whitespace collapsed, for matching messages.
+/// Text with colors removed and runs of whitespace collapsed, for matching
+/// messages. The `│` that miette starts a wrapped line with is removed too.
 pub fn plain(bytes: &[u8]) -> String {
     let stripped = strip_ansi_escapes::strip(bytes);
     String::from_utf8_lossy(&stripped)
         .split_whitespace()
+        .filter(|word| *word != "│")
         .collect::<Vec<_>>()
         .join(" ")
 }

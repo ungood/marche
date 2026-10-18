@@ -10,7 +10,6 @@ Feature: Input, output and context schemas
   schema. `marche run` rejects a schema given as an external `resource`, or
   one whose `$ref` points outside the document.
 
-  @wip
   Scenario: Workflow input that doesn't match input.schema faults the run
     Given a workflow with definition:
       """yaml
@@ -43,7 +42,6 @@ Feature: Input, output and context schemas
       instance: /input
       """
 
-  @wip
   Scenario: A task's input.schema checks its input before input.from
     Given a workflow with definition:
       """yaml
@@ -77,7 +75,6 @@ Feature: Input, output and context schemas
       cooked: soup
       """
 
-  @wip
   Scenario: A task's input that doesn't match its input.schema faults the task
     Given a workflow with definition:
       """yaml
@@ -116,7 +113,6 @@ Feature: Input, output and context schemas
       type: https://open-workflow-specification.org/spec/1.0.0/errors/validation
       """
 
-  @wip
   Scenario: A task's output.schema checks its output after output.as
     Given a workflow with definition:
       """yaml
@@ -141,7 +137,6 @@ Feature: Input, output and context schemas
       soup
       """
 
-  @wip
   Scenario: A task's output that doesn't match its output.schema faults the task
     Given a workflow with definition:
       """yaml
@@ -169,7 +164,6 @@ Feature: Input, output and context schemas
       instance: /do/0/cook
       """
 
-  @wip
   Scenario: A context that doesn't match export.schema faults the task
     Given a workflow with definition:
       """yaml
@@ -205,7 +199,6 @@ Feature: Input, output and context schemas
       """
     And order should run last
 
-  @wip
   Scenario: Workflow output.schema checks the output after output.as
     Given a workflow with definition:
       """yaml
@@ -234,7 +227,6 @@ Feature: Input, output and context schemas
       instance: /output
       """
 
-  @wip
   Scenario: A schema given as an external resource is rejected before the run starts
     Given the file "order.yaml":
       """yaml
@@ -260,7 +252,6 @@ Feature: Input, output and context schemas
       /do/0/cook uses an external input.schema, which marche doesn't support yet.
       """
 
-  @wip
   Scenario: A schema that refers outside its document is rejected before the run starts
     Given the file "order.yaml":
       """yaml
@@ -272,7 +263,7 @@ Feature: Input, output and context schemas
       output:
         schema:
           document:
-            $ref: https://example.com/order.json
+            $ref: urn:example:order
       do:
         - cook:
             set:
@@ -283,5 +274,5 @@ Feature: Input, output and context schemas
     And the error says:
       """
       order.yaml can't run on marche yet.
-      The workflow uses an output.schema that refers to https://example.com/order.json, which marche doesn't fetch, because a run must replay the same way every time.
+      The workflow uses an output.schema that refers to urn:example:order, which marche doesn't fetch, because a run must replay the same way every time.
       """

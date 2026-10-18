@@ -6,7 +6,6 @@ Feature: Timeouts
   survives a worker restart. `after` is written inline, as a duration object
   or an expression. Timeouts named in `use.timeouts` aren't supported yet.
 
-  @wip
   Scenario: A task that runs past its timeout faults with a timeout error
     Given a workflow with definition:
       """yaml
@@ -38,7 +37,6 @@ Feature: Timeouts
       type: https://open-workflow-specification.org/spec/1.0.0/errors/timeout
       """
 
-  @wip
   Scenario: A timeout cancels the tasks running inside it
     Given a workflow with definition:
       """yaml
@@ -67,7 +65,6 @@ Feature: Timeouts
     And course should fault
     And nap should cancel
 
-  @wip
   Scenario: A task that finishes within its timeout completes
     Given a workflow with definition:
       """yaml
@@ -91,7 +88,6 @@ Feature: Timeouts
       hello
       """
 
-  @wip
   Scenario: A workflow that runs past its timeout faults with a timeout error
     Given a workflow with definition:
       """yaml
@@ -120,7 +116,6 @@ Feature: Timeouts
       """
     And nap should cancel
 
-  @wip
   Scenario: A named timeout is rejected before the run starts
     Given the file "nap.yaml":
       """yaml

@@ -29,7 +29,7 @@ Action:
 Outcome:
 
 - `the command succeeds`, `the command fails`
-- `the output says:` with the expected text as a doc string. Each line must appear in standard output, after colors are removed and whitespace is collapsed.
+- `the output says:` with the expected text as a doc string. Each line must appear in standard output, after colors and the `│` that starts a wrapped line are removed and whitespace is collapsed.
 - `the error says:` matches standard error the same way, and `marche prints:` matches both streams together.
 - `the JSON output contains:` with a JSON doc string. Standard output must be JSON with every field given.
 

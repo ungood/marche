@@ -4,8 +4,8 @@
 //!
 //! This code runs as workflow code, so it must be deterministic: no clocks,
 //! randomness, environment, I/O or unordered iteration except through the host.
-//! Concurrent work uses [`join_all`], Temporal's deterministic join, never
-//! tokio's or futures' combinators.
+//! Concurrent work uses [`join_all`] and [`select`], Temporal's deterministic
+//! combinators, never tokio's or futures'.
 //!
 //! Each task type lives in its own module under `tasks/`, and [`Interpreter::execute`]
 //! dispatches to it.
@@ -16,14 +16,15 @@
 //! token is cancelled with its parent, and the workflow's root token is
 //! cancelled when the run is.
 
-// For `wait`, `timeout` and retry delays, still to come.
-#[allow(dead_code)]
 pub mod duration;
+pub mod schema;
 mod tasks;
 #[cfg(test)]
 mod tests;
 
 use std::cell::RefCell;
+use std::future::Future;
+use std::pin::pin;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::FutureExt;
@@ -32,6 +33,7 @@ use serde_json::{Value, json};
 pub use temporalio_sdk::WorkflowCancellationToken as Token;
 #[allow(unused_imports)]
 pub(crate) use temporalio_sdk::workflows::join_all;
+use temporalio_sdk::workflows::select;
 
 use crate::expr::{self, Scope};
 use crate::ows;
@@ -60,7 +62,7 @@ impl Halt {
 }
 
 /// What the interpreter needs from the workflow that runs it.
-// `timer`, `random` and `continue_as_new_suggested` are for task types still to come.
+// `random` and `continue_as_new_suggested` are for features still to come.
 #[allow(dead_code)]
 pub trait Host {
     /// The workflow clock, which replays identically.
@@ -151,6 +153,17 @@ pub struct Interpreter<'h, H> {
     context: RefCell<Value>,
 }
 
+/// How long a task or workflow may run, from its `timeout.after`, which may be
+/// an expression. A timeout named in `use.timeouts` has no `after`, and the
+/// checks `marche run` makes reject it.
+fn timeout(owner: &Value, input: &Value, scope: &Scope) -> Result<Option<Duration>, ows::Error> {
+    let Some(after) = owner.pointer("/timeout/after") else {
+        return Ok(None);
+    };
+    let after = expr::evaluate_template(after, input, scope)?;
+    duration::parse(&after).map(Some)
+}
+
 /// The spec's dateTimeDescriptor.
 pub fn date_time(time: SystemTime) -> Value {
     let since = time.duration_since(UNIX_EPOCH).unwrap_or_default();
@@ -203,21 +216,69 @@ impl<'h, H: Host> Interpreter<'h, H> {
         self.workflow["startedAt"] = date_time(self.host.now());
         let scope = self.scope();
         let definition = self.definition.clone();
+        schema::check(&definition, "input", &input).map_err(|e| e.at("/input"))?;
         let input = match definition.pointer("/input/from") {
             Some(from) => expr::evaluate_field(from, &input, &scope).map_err(|e| e.at("/input"))?,
             None => input,
         };
-        let done = self
-            .run_list(&definition["do"], "/do".into(), input, token)
-            .await?;
-        match definition.pointer("/output/as") {
+        let after = timeout(&definition, &input, &scope).map_err(|e| e.at("/timeout"))?;
+        let list = &definition["do"];
+        let this = &*self;
+        let done = this
+            .within(after, token, "workflow", |token| async move {
+                this.run_list(list, "/do".into(), input, &token).await
+            })
+            .await
+            .map_err(|halt| halt.at("/"))?;
+        let output = match definition.pointer("/output/as") {
             Some(output) => {
                 let scope = self.scope();
-                Ok(expr::evaluate_field(output, &done.output, &scope)
-                    .map_err(|e| e.at("/output"))?)
+                expr::evaluate_field(output, &done.output, &scope).map_err(|e| e.at("/output"))?
             }
-            None => Ok(done.output),
+            None => done.output,
+        };
+        schema::check(&definition, "output", &output).map_err(|e| e.at("/output"))?;
+        Ok(output)
+    }
+
+    /// Runs `work` under a child of `token`. With a duration, a timer races it:
+    /// if the timer fires first, the child is cancelled, and once `work` has
+    /// stopped the result is a timeout error. `what` names the task or
+    /// workflow in the error.
+    async fn within<T, F>(
+        &self,
+        after: Option<Duration>,
+        token: &Token,
+        what: &str,
+        work: impl FnOnce(Token) -> F,
+    ) -> Result<T, Halt>
+    where
+        F: Future<Output = Result<T, Halt>>,
+    {
+        let Some(after) = after else {
+            return work(token.clone()).await;
+        };
+        let scope = token.child_token();
+        let timer_scope = token.child_token();
+        let mut work = pin!(work(scope.clone()).fuse());
+        let mut timer = self.host.timer(after, &timer_scope).fuse();
+        // Biased toward the work, so a task that finishes as the timer fires
+        // completes, the same way on every replay.
+        let fired = select! {
+            result = work => {
+                timer_scope.cancel();
+                return result;
+            }
+            fired = timer => fired.is_ok(),
+        };
+        // A timer that didn't fire was cancelled with the parent scope, which
+        // stops the work too.
+        if !fired {
+            return work.await;
         }
+        scope.cancel();
+        let _ = work.await;
+        Err(ows::Error::timeout(format!("The {what} didn't finish within {after:?}.")).into())
     }
 
     /// Runs a task list in order, following `then`. `path` is the list's
@@ -330,6 +391,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
         mut scope: Scope,
         token: &Token,
     ) -> Result<(Value, Flow), Halt> {
+        schema::check(definition, "input", &raw_input).map_err(|e| e.at(reference))?;
         let input = match definition.pointer("/input/from") {
             Some(from) => {
                 expr::evaluate_field(from, &raw_input, &scope).map_err(|e| e.at(reference))?
@@ -337,18 +399,22 @@ impl<'h, H: Host> Interpreter<'h, H> {
             None => raw_input,
         };
         scope.input = input.clone();
-        let task = Task {
-            name,
-            definition,
-            reference,
-            input,
-            scope,
-            token,
-        };
-        let outcome = tasks::execute(self, &task)
+        let after = timeout(definition, &input, &scope).map_err(|e| e.at(reference))?;
+        let (outcome, mut scope) = self
+            .within(after, token, "task", |token| async move {
+                let task = Task {
+                    name,
+                    definition,
+                    reference,
+                    input,
+                    scope,
+                    token: &token,
+                };
+                let outcome = tasks::execute(self, &task).await?;
+                Ok((outcome, task.scope))
+            })
             .await
             .map_err(|halt| halt.at(reference))?;
-        let mut scope = task.scope;
 
         scope.task["output"] = outcome.output.clone();
         let output = match definition.pointer("/output/as") {
@@ -356,10 +422,16 @@ impl<'h, H: Host> Interpreter<'h, H> {
                 .map_err(|e| e.at(reference))?,
             None => outcome.output,
         };
-        if let Some(export) = definition.pointer("/export/as") {
-            scope.output = output.clone();
-            let context =
-                expr::evaluate_field(export, &output, &scope).map_err(|e| e.at(reference))?;
+        schema::check(definition, "output", &output).map_err(|e| e.at(reference))?;
+        if let Some(export) = definition.get("export") {
+            let context = match export.get("as") {
+                Some(export) => {
+                    scope.output = output.clone();
+                    expr::evaluate_field(export, &output, &scope).map_err(|e| e.at(reference))?
+                }
+                None => scope.context.clone(),
+            };
+            schema::check(definition, "export", &context).map_err(|e| e.at(reference))?;
             self.set_context(context);
         }
 
