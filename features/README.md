@@ -24,6 +24,9 @@ Setup:
 - `the environment variable "<name>" is "<value>"` sets a variable for `I run`, after the ones above.
 - `Temporal's configuration file says:` with TOML as a doc string, written to the file `TEMPORAL_CONFIG_FILE` names.
 - `a worker started with "marche worker <flags>"` starts the scenario's own server, and a worker with those flags.
+- `"<path>" has run` runs `marche run <path>` from the file's directory and waits for the run to end, however it ends, and for Temporal's visibility to list it as ended.
+- `"<path>" is running its <task> task` runs `marche run <path> --detach` from the file's directory, and waits until the task has started and visibility lists the run.
+- `the run "<id>" has started on a task queue no worker serves` starts a `marche.interpret` workflow with that ID on the task queue `elsewhere`, with `temporal workflow start`.
 
 Action:
 
@@ -40,9 +43,11 @@ Outcome:
 - `the error says:` matches standard error the same way, `the help says:` matches the error's help, and `marche prints:` matches both streams together. `marche doesn't print:` checks that no line appears in either.
 - `the error points at line <n> of "<file>"` checks that one of the error's snippets shows that line.
 - `the worker prints:` matches what the scenario's own worker has printed.
-- `the JSON output contains:` with a JSON doc string. Standard output must be JSON with every field given.
+- `the JSON output contains:` with a JSON doc string. Standard output must be JSON with every field given. An array matches an array of the same length whose items each contain the expected item.
 - `the process whose ID is in "<path>" has stopped` reads a process ID from a file in the scenario's directory and checks that the process has exited.
 - `<task> should have a standard output log of <n> bytes` checks the size of the log `marche show` gives for the task.
+
+Run IDs aren't predictable, so in commands and expected text, `$RUN` stands for the ID of the run the scenario started last with `has run` or `is running`, and `$ULID` for that ID's ULID.
 
 ## Conformance kit steps
 

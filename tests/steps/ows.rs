@@ -193,13 +193,18 @@ fn assert_status(actual: &Value, expected: &str, what: &str) {
     );
 }
 
-/// Whether every key in `expected` appears in `actual` with a matching value.
-/// Runtimes may add detail, such as an error's `detail`.
+/// Whether every key in `expected` appears in `actual` with a matching value,
+/// and arrays match item by item. Runtimes may add detail, such as an error's
+/// `detail`.
 pub fn contains(actual: &Value, expected: &Value) -> bool {
     match (actual, expected) {
         (Value::Object(actual), Value::Object(expected)) => expected
             .iter()
             .all(|(key, value)| actual.get(key).is_some_and(|a| contains(a, value))),
+        (Value::Array(actual), Value::Array(expected)) => {
+            actual.len() == expected.len()
+                && actual.iter().zip(expected).all(|(a, e)| contains(a, e))
+        }
         _ => actual == expected,
     }
 }
