@@ -46,7 +46,9 @@ set -euo pipefail
 cargo build --release --locked
 # build.rs takes the version from git, so ask the binary rather than Cargo.toml.
 version=$(target/release/marche --version | cut -d' ' -f2)
-os=$(uname -s | tr '[:upper:]' '[:lower:]')
+# Archives are named by the Rust target they were built for, such as
+# aarch64-apple-darwin, which packslip and mise's github backend both parse.
+target=$(rustc -vV | sed -n 's/^host: //p')
 mkdir -p dist
-tar -czf "dist/marche-$version-$os-$(uname -m).tar.gz" -C target/release marche
+tar -czf "dist/marche-$version-$target.tar.gz" -C target/release marche
 '''
