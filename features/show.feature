@@ -38,9 +38,9 @@ Feature: marche show
       completed /do/1/say
       output: "Hello, world"
       stdout:
-      /runs/$RUN/do/1/say/1.stdout
+      /runs/$RUN/do/1/say/1/1.stdout
       stderr:
-      /runs/$RUN/do/1/say/1.stderr
+      /runs/$RUN/do/1/say/1/1.stderr
       """
 
   Scenario: Show prints a faulted task's error

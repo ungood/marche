@@ -5,11 +5,12 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use cucumber::gherkin::Step;
 use cucumber::{given, then, when};
 use serde_json::Value;
 use tokio::process::Command;
 
-use super::ows::{finish, task};
+use super::ows::{finish, task, tasks, yaml};
 use super::world::MarcheWorld;
 
 /// How long a step has to do what a scenario waits for.
@@ -112,8 +113,21 @@ async fn cancel(world: &mut MarcheWorld) {
     })
     .await;
     let id = id.expect("the workflow's ID");
+    let cancelled = Instant::now();
     temporal(&address, &["workflow", "cancel", "--workflow-id", &id]).await;
     wait_for_run(world).await;
+    world.took = Some(cancelled.elapsed());
+}
+
+#[then(regex = r"^the run should end within (\d+) seconds$")]
+fn ends_within(world: &mut MarcheWorld, seconds: u64) {
+    let took = world
+        .took
+        .expect("the workflow wasn't executed or cancelled");
+    assert!(
+        took <= Duration::from_secs(seconds),
+        "the run took {took:?}"
+    );
 }
 
 #[then(regex = r#"^the process whose ID is in "([^"]+)" has stopped$"#)]
@@ -142,4 +156,35 @@ fn log_size(world: &mut MarcheWorld, name: String, bytes: u64) {
         .unwrap_or_else(|error| panic!("read {log}: {error}"))
         .len();
     assert_eq!(size, bytes, "the size of {log}");
+}
+
+#[then(regex = r"^each run of (\w+) has a standard output log of its own, saying:$")]
+fn own_logs(world: &mut MarcheWorld, name: String, step: &Step) {
+    let expected = yaml(step);
+    let logs: Vec<&str> = tasks(world)
+        .into_iter()
+        .filter(|task| task["name"] == name.as_str())
+        .map(|task| {
+            task["log"]
+                .as_str()
+                .unwrap_or_else(|| panic!("a run of {name} has no log"))
+        })
+        .collect();
+    let mut distinct = logs.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        logs.len(),
+        "runs of {name} share logs: {logs:?}"
+    );
+    let said: Vec<Value> = logs
+        .iter()
+        .map(|log| {
+            let text =
+                std::fs::read_to_string(log).unwrap_or_else(|error| panic!("read {log}: {error}"));
+            Value::String(text.trim_end_matches('\n').to_string())
+        })
+        .collect();
+    assert_eq!(Value::Array(said), expected, "the logs of {name}: {logs:?}");
 }

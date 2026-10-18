@@ -98,3 +98,33 @@ Feature: Continuing as new
     And simmer should run 4 times
     And cook should run first
     And plate should run last
+
+  Scenario: Steps in later runs keep logs of their own
+    Given the worker continues runs as new after every 2 tasks
+    And a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: continue-logs
+        version: '0.1.0'
+      do:
+        - serve:
+            for:
+              each: dish
+              in: [ soup, fish, cake ]
+            do:
+              - plate:
+                  run:
+                    shell:
+                      command: echo "$1"
+                      arguments:
+                        - ${ $dish }
+      """
+    When the workflow is executed
+    Then the workflow should complete
+    And the workflow should have continued as new 1 time
+    And each run of plate has a standard output log of its own, saying:
+      """yaml
+      [ soup, fish, cake ]
+      """

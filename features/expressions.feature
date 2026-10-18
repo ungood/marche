@@ -115,6 +115,42 @@ Feature: Expressions and data flow
       served: soup
       """
 
+  Scenario: A task's output.as and export see what its inner tasks exported
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: context-inner
+        version: '0.1.0'
+      do:
+        - kitchen:
+            do:
+              - order:
+                  set:
+                    ready: true
+                  export:
+                    as: '{ order: "soup" }'
+            output:
+              as: '{ cooked: $context.order }'
+            export:
+              schema:
+                format: json
+                document:
+                  type: object
+                  required: [ order ]
+        - serve:
+            set:
+              cooked: ${ .cooked }
+              served: ${ $context.order }
+      """
+    When the workflow is executed
+    Then the workflow should complete with output:
+      """yaml
+      cooked: soup
+      served: soup
+      """
+
   Scenario: Workflow input.from and output.as shape the run's input and output
     Given a workflow with definition:
       """yaml

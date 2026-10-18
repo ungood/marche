@@ -6,7 +6,7 @@ use tokio::signal::unix::{SignalKind, signal};
 
 use crate::commands::Verbosity;
 use crate::error::Error;
-use crate::shell::{ShellActivities, state_dir};
+use crate::shell::{HEARTBEAT_INTERVAL, ShellActivities, state_dir};
 use crate::temporal::Target;
 use crate::workflow::{CONTINUE_AS_NEW_AFTER, Interpret, TASK_QUEUE};
 
@@ -38,6 +38,9 @@ pub async fn worker(args: Args, target: &Target, verbosity: Verbosity) -> Result
         // Running steps are killed at once on shutdown, and Temporal reruns them
         // on the next worker.
         .graceful_shutdown_period(Duration::ZERO)
+        // Steps learn of cancellation from heartbeats, which the worker
+        // otherwise holds back for most of the heartbeat timeout.
+        .max_heartbeat_throttle_interval(HEARTBEAT_INTERVAL)
         .build();
     let mut worker = Worker::new(&runtime, temporal.client, options)
         .map_err(|error| Error::Worker(error.to_string()))?;

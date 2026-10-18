@@ -95,10 +95,10 @@ The interpreter follows the OWS 1.0.x DSL and its reference. This section record
 | `switch` | Yes | Cases are checked in order. `then` can name a task in the same list, `continue`, `exit` or `end`. When no case matches, the switch's own `then` applies. |
 | `raise` | Yes | Inline errors, whose `type`, `title`, `detail` and `instance` may be expressions. `instance` defaults to the task's reference. Errors from `use.errors` come with `use`. |
 | `try` | Yes | `catch` with `errors.with`, `when`, `exceptWhen`, `as`, `retry` and `do`. |
-| `wait` | Yes | A Temporal timer. Both duration forms are accepted. |
+| `wait` | Yes | A Temporal timer. Both duration forms are accepted, up to 100 years. ISO 8601 durations use days, hours, minutes and seconds, as plain decimals, because weeks, months and years have no fixed length. `marche run` rejects a duration written in the definition that isn't one, and one an expression gives faults with a `runtime` error titled `Invalid duration`. |
 | `run: shell` | Yes | See [Shell steps](#shell-steps). |
 | `for` | Yes | Sequential by default, or parallel with the [extension](#extension-parallel-for). `in` must give an array. `while` is checked before each iteration, with the item and index bound, on the data the iteration would get. Every iteration's tasks have the same references, so task records list them once per iteration. |
-| `fork` | Yes | Concurrent branches, with or without `compete`. |
+| `fork` | Yes | Concurrent branches, with or without `compete`. A branch skipped by its `if` keeps its place in the output with its input, as a skipped task's output is its input, but never wins a compete. When every branch is skipped, the fork's output is its input. A branch's `then: end` ends the workflow once the fork has finished, and its other `then` values are ignored. |
 | `listen` | M2 | With `marche signal`, delivering CloudEvents as Temporal signals. |
 | `emit` | Later | |
 | `call` | Later | `http`, `grpc`, `openapi`, `asyncapi`, `a2a` and `mcp`. |
@@ -109,6 +109,8 @@ Top-level features outside M1 are `use`, `schedule` and `evaluate.language` valu
 ### Data flow
 
 Data flows as the spec describes: `input.from`, `input.schema`, `output.as`, `output.schema` and `export.as` at both the workflow and task level, and `if` on every task. Expressions are jq, evaluated by jaq in `strict` mode, so in values such as `set`, shell arguments and `environment`, only `${ }` strings are expressions. Fields whose whole value is an expression (`if`, `input.from`, `output.as` and `export.as`) also accept jq without the `${ }`, as the conformance kit writes them.
+
+A task's `output.as` and `export.as`, a `for` task's `while`, and `catch`'s and its retry policy's `when` and `exceptWhen` see `$context` as the tasks inside them left it. `export` without `as` leaves the context as it is and checks it against `export.schema`.
 
 In a `fork`, a branch's `export.as` replaces `$context` when that branch finishes, so tasks still running in other branches see it from then on, and when several branches export, the last to finish wins. That order replays identically but depends on timing, so a definition that needs every branch's result should read the fork's output instead.
 
@@ -138,10 +140,11 @@ The spec leaves some of `catch` to runtimes, and marche does the following:
 
 - **Matching:** `errors.with` matches when the error has every field it lists, with equal values. `when`, `exceptWhen` and the retry policy's own `when` and `exceptWhen` see the error as `$error`, or under the name `as` gives, and so do the `catch.do` tasks.
 - **Delays:** the wait before retry `n` is `delay` with `constant` backoff or none, `delay × n` with `linear`, and `delay × 2^(n-1)` with `exponential`. Jitter adds a random duration between `jitter.from` and `jitter.to`.
+- **Busy retries:** a retry policy needs a `delay`, `limit.attempt.count` or `limit.duration`, and `marche run` rejects one with none of them, which would retry at once, forever. Every retry waits on a timer of at least a millisecond, even with no delay, so a block that faults without waiting for anything still yields to Temporal between attempts, rather than running until Temporal's deadlock detector stops the workflow task.
 - **Limits:** `limit.attempt.count` counts every attempt, including the first. `limit.duration` stops retrying when the next attempt would start after that long since the first one started. `limit.attempt.duration` isn't supported yet, and neither are retry policies named from `use.retries`.
 - **Results:** a caught error runs `catch.do` with the `try` task's input, and its output is the task's output. Without `catch.do`, the task's output is its input. When a retry policy runs out, `catch.do` handles the last error, and without `catch.do` the task faults with it, so a polling loop such as the gate example doesn't carry on as if it had succeeded.
 
-Infrastructure failure is a separate layer that authors don't see. If a worker dies or a heartbeat times out, Temporal runs the step again, for up to three attempts in all. A step whose third attempt is lost too faults with a `runtime` error titled `Step lost`, whose detail says why.
+Infrastructure failure is a separate layer that authors don't see. If a worker dies or a heartbeat times out, Temporal runs the step again, for up to three attempts in all. A step whose third attempt is lost too faults with a `runtime` error titled `Step lost`, whose detail says why and how many attempts it lost.
 
 ### Flow and cancellation
 
@@ -154,7 +157,7 @@ marche follows the statechart rule: leaving a `do`, `fork` or `try` scope cancel
 
 Among concurrent branches, the first to fault or complete is the first whose result the interpreter sees, in the order Temporal delivers them, so it's the same on replay. Cancelled branches and the tasks they were running are recorded as `cancelled`.
 
-A cancelled shell step learns of the cancellation through its next heartbeat. The activity closes the pipe to the step's guard (see [Shell steps](#shell-steps)), and the guard sends SIGTERM to the step's process group, waits up to ten seconds for every process in it to exit, and then sends SIGKILL to what's left. The activity confirms the cancellation once the guard has exited. The interpreter waits for activities to confirm they've stopped before the scope finishes, so nothing a cancelled run started is still running when `marche cancel` returns.
+A cancelled shell step learns of the cancellation through its next heartbeat. Steps heartbeat every second, and the worker sends their heartbeats to Temporal at most a second apart rather than holding them back for most of the heartbeat timeout, so a step learns it was cancelled within about two seconds. The activity closes the pipe to the step's guard (see [Shell steps](#shell-steps)), and the guard sends SIGTERM to the step's process group, waits up to ten seconds for every process in it to exit, and then sends SIGKILL to what's left. The activity keeps heartbeating while the guard stops the step, so a step that takes the whole grace period to stop is reported as cancelled rather than lost, and it confirms the cancellation once the guard has exited, or after fifteen seconds if something the step started still holds its output open. The interpreter waits for activities to confirm they've stopped before the scope finishes, so nothing a cancelled run started is still running when `marche cancel` returns.
 
 ### Shell steps
 
@@ -173,7 +176,7 @@ A `run: shell` step runs `/bin/sh -c <command> sh <arguments...>`, so `$1`, `$2`
 
 Temporal payloads are limited to 2 MB, and a workflow's history to about 50,000 events.
 
-- Standard output and error are capped at 256 KiB each in the step's result, keeping the end of the stream. The full streams always go to `~/.local/state/marche/runs/<run>/<reference>/<attempt>.stdout` and `.stderr`, and `marche show` prints their paths.
+- Standard output and error are capped at 256 KiB each in the step's result, keeping the end of the stream. The full streams always go to `~/.local/state/marche/runs/<run>/<reference>/<record>/<attempt>.stdout` and `.stderr`, and `marche show` prints their paths. `<record>` is the ID of the step's task record, which counts on across continuing as new, so each run of a step, such as each iteration of a loop, keeps logs of its own.
 - When Temporal suggests it, the interpreter continues as new at the next point where no tasks are in flight, carrying the definition, the current position, the context and the current data. A long sequential `for` or a `switch` loop can therefore run indefinitely.
 - Such a point is just before a task in a task list, when every task around it is a `do` or a sequential `for` without a `timeout`, and the workflow has no `timeout`. Anything else around it, such as a `try`, a `fork`, a parallel `for` or a timeout's timer, has work in flight that a new run would lose, so the run waits until it has left them. Each run also finishes at least one task before it continues as new, so a chain always makes progress.
 - The position is a list of frames from the workflow's task list inwards: the index of the task each list is in, the raw and transformed input and `$task.startedAt` of each `do` or `for` task around the point, a `for` task's items and current iteration, and the input of the task to run next. The next run walks the same path down without evaluating `if`, `input.from` or `for.in` again.

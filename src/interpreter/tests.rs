@@ -1,5 +1,6 @@
 //! Interpreter tests against a fake host.
 
+mod context;
 mod continue_as_new;
 mod for_each;
 mod try_catch;
@@ -964,4 +965,157 @@ fn cancelling_the_run_cancels_every_branch() {
             "cancelled /do/0/cook",
         ]
     );
+}
+
+#[test]
+fn a_skipped_branch_keeps_its_place_with_the_fork_input() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - season:
+      fork:
+        branches:
+          - salt:
+              if: ${ .salty }
+              set:
+                dish: salted
+          - pepper:
+              set:
+                dish: peppered
+"#,
+        json!({"salty": false}),
+    );
+    assert_eq!(output, Ok(json!([{"salty": false}, {"dish": "peppered"}])));
+    assert!(!host.events.borrow().iter().any(|e| e.ends_with("/salt")));
+}
+
+#[test]
+fn with_compete_a_skipped_branch_never_wins() {
+    let host = FakeHost::default();
+    steps(&host, &[("runner", Some(2))]);
+    host.results.borrow_mut().push(exited(0, "runner", ""));
+    let output = run(
+        &host,
+        r#"
+do:
+  - race:
+      fork:
+        compete: true
+        branches:
+          - shortcut:
+              if: ${ false }
+              set:
+                winner: shortcut
+          - runner:
+              run:
+                shell:
+                  command: runner
+"#,
+        json!({}),
+    );
+    assert_eq!(output, Ok(json!("runner")));
+    assert_eq!(
+        *host.events.borrow(),
+        [
+            "started /do/0/race",
+            "started /do/0/race/fork/branches/1/runner",
+            "completed /do/0/race/fork/branches/1/runner",
+            "completed /do/0/race",
+        ]
+    );
+}
+
+#[test]
+fn a_fork_whose_branches_are_all_skipped_passes_its_input_on() {
+    for compete in [true, false] {
+        let host = FakeHost::default();
+        let output = run(
+            &host,
+            &format!(
+                r#"
+do:
+  - race:
+      fork:
+        compete: {compete}
+        branches:
+          - left:
+              if: ${{ false }}
+              set:
+                winner: left
+          - right:
+              if: ${{ false }}
+              set:
+                winner: right
+"#
+            ),
+            json!({"winner": "nobody"}),
+        );
+        assert_eq!(
+            output,
+            Ok(json!({"winner": "nobody"})),
+            "compete: {compete}"
+        );
+    }
+}
+
+#[test]
+fn a_branch_that_ends_ends_the_workflow_once_the_fork_finishes() {
+    let host = FakeHost::default();
+    steps(&host, &[("rice", Some(2))]);
+    host.results.borrow_mut().push(exited(0, "rice", ""));
+    let output = run(
+        &host,
+        r#"
+do:
+  - cook:
+      fork:
+        branches:
+          - sauce:
+              set:
+                sauce: done
+              then: end
+          - rice:
+              run:
+                shell:
+                  command: rice
+  - serve:
+      set:
+        served: true
+"#,
+        json!({}),
+    );
+    assert_eq!(output, Ok(json!([{"sauce": "done"}, "rice"])));
+    let events = host.events.borrow();
+    assert!(events.contains(&"completed /do/0/cook/fork/branches/1/rice".to_string()));
+    assert!(!events.iter().any(|event| event.ends_with("/serve")));
+}
+
+#[test]
+fn with_compete_a_winner_that_ends_ends_the_workflow() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - race:
+      fork:
+        compete: true
+        branches:
+          - quick:
+              set:
+                winner: quick
+              then: end
+          - slow:
+              set:
+                winner: slow
+  - serve:
+      set:
+        served: true
+"#,
+        json!({}),
+    );
+    assert_eq!(output, Ok(json!({"winner": "quick"})));
+    assert!(!host.events.borrow().iter().any(|e| e.ends_with("/serve")));
 }

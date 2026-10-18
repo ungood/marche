@@ -76,7 +76,7 @@ fn task_types(list: &Value, types: &mut Vec<String>) {
     }
 }
 
-fn yaml(step: &Step) -> Value {
+pub fn yaml(step: &Step) -> Value {
     serde_yaml_ng::from_str(&docstring(step)).expect("doc string is YAML")
 }
 
@@ -120,7 +120,9 @@ pub fn finish(world: &mut MarcheWorld, result: Value) {
 
 #[when("the workflow is executed")]
 fn execute(world: &mut MarcheWorld) {
+    let started = std::time::Instant::now();
     let result = json(&mut run_command(world));
+    world.took = Some(started.elapsed());
     finish(world, result);
 }
 
@@ -286,7 +288,7 @@ fn has_items(world: &mut MarcheWorld, path: String, count: usize) {
 }
 
 /// The tasks named `name`, in the order they started.
-fn tasks(world: &MarcheWorld) -> Vec<&Value> {
+pub fn tasks(world: &MarcheWorld) -> Vec<&Value> {
     world.show.as_ref().expect("the workflow wasn't executed")["tasks"]
         .as_array()
         .expect("marche show --json has tasks")

@@ -13,6 +13,10 @@ use crate::ows;
 
 /// The stream retry jitter draws from, so it doesn't shift other randomness.
 const JITTER_STREAM: &str = "marche.jitter";
+/// The shortest wait before a retry. Even a retry without a delay waits on a
+/// timer, so a block that faults without waiting for anything still yields to
+/// Temporal between attempts.
+const SHORTEST_DELAY: Duration = Duration::from_millis(1);
 
 pub async fn execute<H: Host>(
     interpreter: &Interpreter<'_, H>,
@@ -48,6 +52,8 @@ pub async fn execute<H: Host>(
             Err(Halt::Fault(error)) => error,
         };
         let mut scope = task.scope.clone();
+        // The tasks that ran may have exported.
+        scope.context = interpreter.context();
         scope.bind(
             name,
             serde_json::to_value(&error).expect("errors serialize"),
@@ -63,7 +69,10 @@ pub async fn execute<H: Host>(
             .unwrap_or_default();
         let random = || interpreter.host.random(JITTER_STREAM);
         match next_delay(policy, attempt, elapsed, &task.input, &scope, random)? {
-            Some(delay) => interpreter.host.timer(delay, task.token).await?,
+            Some(delay) => {
+                let delay = delay.max(SHORTEST_DELAY);
+                interpreter.host.timer(delay, task.token).await?
+            }
             // Out of retries: `catch.do` handles the last error, if there is one.
             None if catch.get("do").is_some() => break scope,
             None => return Err(error.into()),
@@ -169,6 +178,7 @@ fn next_delay(
         let spread = to.saturating_sub(from).mul_f64(random());
         delay = delay.saturating_add(from).saturating_add(spread);
     }
+    let delay = delay.min(crate::interpreter::duration::MAX);
     if let Some(limit) = duration("/limit/duration")?
         && elapsed.saturating_add(delay) > limit
     {

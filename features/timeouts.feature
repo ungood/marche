@@ -36,6 +36,7 @@ Feature: Timeouts
       """yaml
       type: https://open-workflow-specification.org/spec/1.0.0/errors/timeout
       """
+    And the run should end within 6 seconds
 
   Scenario: A timeout cancels the tasks running inside it
     Given a workflow with definition:

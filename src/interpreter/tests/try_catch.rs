@@ -330,3 +330,31 @@ do:
         ["started /do/0/poll", "cancelled /do/0/poll"]
     );
 }
+
+#[test]
+fn a_retry_without_a_delay_still_waits_on_a_timer() {
+    let host = FakeHost::default();
+    let definition: Value = serde_yaml_ng::from_str(
+        r#"
+do:
+  - poll:
+      try:
+        - fail:
+            raise:
+              error:
+                type: https://example.com/oops
+                status: 500
+      catch:
+        retry:
+          limit:
+            attempt:
+              count: 3
+"#,
+    )
+    .unwrap();
+    let mut interpreter = Interpreter::new(&host, definition, "test.run-1", "/work");
+    let output = futures::executor::block_on(interpreter.run(json!({}), &Token::new()));
+    assert!(matches!(output, Err(Halt::Fault(_))), "{output:?}");
+    let shortest = Duration::from_millis(1);
+    assert_eq!(*host.timers.borrow(), [shortest, shortest]);
+}

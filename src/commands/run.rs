@@ -67,6 +67,7 @@ pub async fn run(args: Args, target: &Target, verbosity: Verbosity) -> Result<Ex
         input,
         directory,
         resume: None,
+        records: 0,
     };
     let handle = temporal
         .client

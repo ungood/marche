@@ -29,6 +29,9 @@ pub struct MarcheWorld {
     pub env: Vec<(String, String)>,
     /// The ID of the run started last by `has run` or `is running`.
     pub run_id: Option<String>,
+    /// How long `the workflow is executed` took, or how long the run took to
+    /// stop after `the workflow is cancelled`.
+    pub took: Option<std::time::Duration>,
 }
 
 impl MarcheWorld {
@@ -48,6 +51,7 @@ impl MarcheWorld {
             pending: None,
             env: Vec::new(),
             run_id: None,
+            took: None,
         }
     }
 

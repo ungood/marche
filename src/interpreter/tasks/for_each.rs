@@ -28,7 +28,7 @@ pub async fn execute<H: Host>(
     let path = format!("{}/do", task.reference);
     let mut current = task.input.clone();
     for (index, item) in items.iter().enumerate().skip(start.unwrap_or(0)) {
-        let scope = iteration_scope(task, item, index);
+        let scope = iteration_scope(interpreter, task, item, index);
         if let Some(condition) = task.definition.get("while")
             && start != Some(index)
             && !expr::truthy(&expr::evaluate_field(condition, &current, &scope)?)
@@ -79,12 +79,18 @@ fn items(task: &Task<'_>) -> Result<Vec<Value>, ows::Error> {
 }
 
 /// The task's scope with the item and its index bound, as `for.each` and
-/// `for.at` name them.
-fn iteration_scope(task: &Task<'_>, item: &Value, index: usize) -> Scope {
+/// `for.at` name them, and the context as earlier iterations left it.
+fn iteration_scope<H: Host>(
+    interpreter: &Interpreter<'_, H>,
+    task: &Task<'_>,
+    item: &Value,
+    index: usize,
+) -> Scope {
     let spec = &task.definition["for"];
     let each = spec.get("each").and_then(Value::as_str).unwrap_or("item");
     let at = spec.get("at").and_then(Value::as_str).unwrap_or("index");
     let mut scope = task.scope.clone();
+    scope.context = interpreter.context();
     scope.bind(each, item.clone());
     scope.bind(at, Value::from(index));
     scope
@@ -188,7 +194,7 @@ async fn lane<H: Host>(
         let index = lanes.next.get();
         let Some(item) = items.get(index) else { return };
         lanes.next.set(index + 1);
-        let scope = iteration_scope(task, item, index);
+        let scope = iteration_scope(interpreter, task, item, index);
         let iteration = token.child_token();
         let result = interpreter
             .run_list_with(

@@ -10,8 +10,9 @@ Feature: For
   is the input.
 
   `while` is checked before each iteration, with the item and index bound, on
-  the data the iteration would get. The loop stops at the first iteration for
-  which it's false.
+  the data the iteration would get, and with the context the earlier
+  iterations exported. The loop stops at the first iteration for which it's
+  false.
 
   The tasks of every iteration have the same references, such as
   `/do/0/loop/do/0/plate`, so `marche show` lists them once per iteration, in
@@ -84,6 +85,34 @@ Feature: For
       last: 1
       """
     And add should run 2 times
+
+  Scenario: while sees the context the earlier iterations exported
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: for-while-context
+        version: '0.1.0'
+      do:
+        - count:
+            for:
+              each: x
+              in: [ 1, 2, 3, 4, 5 ]
+            while: '$context.stop != true'
+            do:
+              - step:
+                  set:
+                    n: ${ $x }
+                  export:
+                    as: '{ stop: ($x >= 2) }'
+      """
+    When the workflow is executed
+    Then the workflow should complete with output:
+      """yaml
+      n: 2
+      """
+    And step should run 2 times
 
   Scenario: A loop with no items passes its input on
     Given a workflow with definition:

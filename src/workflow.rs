@@ -9,7 +9,7 @@ use futures::future::LocalBoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use temporalio_common::RetryPolicy;
-use temporalio_common::error::IncomingError;
+use temporalio_common::error::{IncomingError, RetryState};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityCancellationType, ActivityExecutionError, ActivityOptions, ApplicationFailure,
@@ -45,6 +45,10 @@ pub struct RunInput {
     /// Where to carry on, for a run that an earlier run continued as new.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume: Option<State>,
+    /// How many task records the earlier runs of the chain started, so that
+    /// record IDs, and the shell logs named after them, stay unique.
+    #[serde(default)]
+    pub records: usize,
 }
 
 #[workflow]
@@ -54,6 +58,9 @@ pub struct Interpret {
     tasks: Vec<TaskRecord>,
     /// How many of them have finished.
     finished: usize,
+    /// The ID of this run's first record: how many the earlier runs of the
+    /// chain started.
+    first: usize,
 }
 
 #[workflow_methods]
@@ -63,6 +70,7 @@ impl Interpret {
         ctx: &mut WorkflowContext<Self>,
         mut input: RunInput,
     ) -> WorkflowResult<Value> {
+        ctx.state_mut(|state| state.first = input.records);
         let host = WorkflowHost { ctx: ctx.clone() };
         let id = ctx.workflow_id().to_string();
         let mut interpreter =
@@ -78,6 +86,7 @@ impl Interpret {
             Err(Halt::ContinueAsNew) => {
                 let next = RunInput {
                     resume: Some(interpreter.continuation()),
+                    records: input.records + ctx.state(|state| state.tasks.len()),
                     ..input
                 };
                 match ctx.continue_as_new(next, ContinueAsNewOptions::default()) {
@@ -120,13 +129,16 @@ impl Host for WorkflowHost {
                 error: None,
                 log: None,
             });
-            state.tasks.len() - 1
+            state.first + state.tasks.len() - 1
         })
     }
 
     fn task_finished(&self, record: usize, result: &Result<Value, Halt>) {
         self.ctx.state_mut(|state| {
-            let Some(task) = state.tasks.get_mut(record) else {
+            let Some(task) = record
+                .checked_sub(state.first)
+                .and_then(|index| state.tasks.get_mut(index))
+            else {
                 return;
             };
             state.finished += 1;
@@ -188,7 +200,7 @@ impl Host for WorkflowHost {
         request: ShellRequest,
         token: &Token,
     ) -> LocalBoxFuture<'_, Result<ShellResult, Halt>> {
-        let reference = request.reference.clone();
+        let (reference, record) = (request.reference.clone(), request.record);
         let options = ActivityOptions::with_start_to_close_timeout(SHELL_TIMEOUT)
             .heartbeat_timeout(SHELL_HEARTBEAT_TIMEOUT)
             .cancellation_type(ActivityCancellationType::WaitCancellationCompleted)
@@ -212,11 +224,9 @@ impl Host for WorkflowHost {
             };
             if let Ok(ShellResult { log: Some(log), .. }) = &result {
                 self.ctx.state_mut(|state| {
-                    if let Some(task) = state
-                        .tasks
-                        .iter_mut()
-                        .rev()
-                        .find(|t| t.reference == reference)
+                    if let Some(task) = record
+                        .checked_sub(state.first)
+                        .and_then(|index| state.tasks.get_mut(index))
                     {
                         task.log = Some(log.clone());
                     }
@@ -240,10 +250,19 @@ fn shell_error(error: &ActivityExecutionError) -> ows::Error {
         }
         cause = incoming.cause();
     }
-    ows::Error::runtime(
-        "Step lost",
-        format!(
-            "The step stopped {SHELL_ATTEMPTS} times without finishing, because its worker died or stopped responding: {error}"
+    let retry_state = match error {
+        ActivityExecutionError::Failed(failure) => failure.retry_state(),
+        _ => RetryState::Unspecified,
+    };
+    let lost = match retry_state {
+        RetryState::MaximumAttemptsReached => format!(
+            "The step's worker died or stopped responding during each of its {SHELL_ATTEMPTS} attempts"
         ),
-    )
+        RetryState::CancelRequested => {
+            "The step's worker died or stopped responding while the step was being cancelled"
+                .to_string()
+        }
+        _ => "The step's worker died or stopped responding".to_string(),
+    };
+    ows::Error::runtime("Step lost", format!("{lost}: {error}"))
 }

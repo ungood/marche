@@ -70,12 +70,14 @@ impl Halt {
 pub trait Host {
     /// The workflow clock, which replays identically.
     fn now(&self) -> SystemTime;
-    /// Records that a task started, and returns the record's ID. A reference
-    /// isn't enough to find the record again, because a loop's iterations
-    /// run the same tasks, at the same time when it's parallel.
+    /// Records that a task started, and returns the record's ID, which is
+    /// unique within the run, across continuing as new. A reference isn't
+    /// enough to find the record again, because a loop's iterations run the
+    /// same tasks, at the same time when it's parallel.
     fn task_started(&self, reference: &str, name: &str) -> usize;
     fn task_finished(&self, record: usize, result: &Result<Value, Halt>);
-    /// Runs a shell step. Cancelling `token` stops it, and the future resolves
+    /// Runs a shell step, for the task record `request.record`, which gets
+    /// the step's log. Cancelling `token` stops it, and the future resolves
     /// with [`Halt::Cancelled`] once the step's processes have exited.
     fn shell(
         &self,
@@ -122,6 +124,16 @@ pub struct Done {
     pub end: bool,
 }
 
+/// What [`Interpreter::run_task`] gives for a task that didn't halt: its
+/// output, where the run goes next, and whether its `if` skipped it, in which
+/// case the output is its input.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ran {
+    pub output: Value,
+    pub flow: Flow,
+    pub skipped: bool,
+}
+
 /// What a task type's code gets: the task and its transformed input.
 #[allow(dead_code)]
 pub struct Task<'a> {
@@ -129,6 +141,8 @@ pub struct Task<'a> {
     /// The task's definition, the object under its name.
     pub definition: &'a Value,
     pub reference: &'a str,
+    /// The ID of the task's record, from [`Host::task_started`].
+    pub record: usize,
     /// The transformed input, after `input.from`.
     pub input: Value,
     /// The expression arguments, with `$input` and `$task` set.
@@ -217,6 +231,13 @@ impl<'h, H: Host> Interpreter<'h, H> {
             runtime: self.runtime.clone(),
             ..Scope::default()
         }
+    }
+
+    /// The current `$context`. A scope taken before a task ran holds the
+    /// context from then, so code that evaluates after tasks inside it have
+    /// exported refreshes its scope's context from here.
+    pub fn context(&self) -> Value {
+        self.context.borrow().clone()
     }
 
     /// Replaces `$context`, as `export.as` does.
@@ -431,7 +452,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
                 if result == Err(Halt::ContinueAsNew) {
                     self.suspend(Frame::Within { index });
                 }
-                let (output, flow) = result?;
+                let Ran { output, flow, .. } = result?;
                 current = output;
                 match flow {
                     Flow::Continue => index += 1,
@@ -474,7 +495,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
         input: Value,
         token: &Token,
         variables: &[(String, Value)],
-    ) -> Result<(Value, Flow), Halt> {
+    ) -> Result<Ran, Halt> {
         // A resumed task carries on where it stopped, without checking `if` or
         // transforming its input again.
         let (input, transformed, started_at) =
@@ -496,13 +517,19 @@ impl<'h, H: Host> Interpreter<'h, H> {
         });
         if let Some(condition) = definition.get("if").filter(|_| transformed.is_none()) {
             match expr::evaluate_field(condition, &input, &scope) {
-                Ok(value) if !expr::truthy(&value) => return Ok((input, Flow::Continue)),
+                Ok(value) if !expr::truthy(&value) => {
+                    return Ok(Ran {
+                        output: input,
+                        flow: Flow::Continue,
+                        skipped: true,
+                    });
+                }
                 Ok(_) => {}
                 Err(error) => {
-                    let result = Err(Halt::Fault(error.at(reference)));
+                    let halt = Halt::Fault(error.at(reference));
                     let record = self.host.task_started(reference, name);
-                    self.host.task_finished(record, &result);
-                    return result.map(|output| (output, Flow::Continue));
+                    self.host.task_finished(record, &Err(halt.clone()));
+                    return Err(halt);
                 }
             }
         }
@@ -513,7 +540,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
             None => Input::Raw(input),
         };
         let result = self
-            .execute(name, definition, reference, input, scope, token)
+            .execute(name, definition, reference, record, input, scope, token)
             .await;
         // A task that continues as new carries on in the next run, which
         // records how it ends.
@@ -524,14 +551,21 @@ impl<'h, H: Host> Interpreter<'h, H> {
                 .map_err(Clone::clone);
             self.host.task_finished(record, &output);
         }
-        result
+        let (output, flow) = result?;
+        Ok(Ran {
+            output,
+            flow,
+            skipped: false,
+        })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn execute(
         &self,
         name: &str,
         definition: &Value,
         reference: &str,
+        record: usize,
         input: Input,
         mut scope: Scope,
         token: &Token,
@@ -556,6 +590,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
                     name,
                     definition,
                     reference,
+                    record,
                     input,
                     scope,
                     token: &token,
@@ -566,6 +601,8 @@ impl<'h, H: Host> Interpreter<'h, H> {
             .await
             .map_err(|halt| halt.at(reference))?;
 
+        // The tasks inside this one may have exported since its scope was taken.
+        scope.context = self.context();
         scope.task["output"] = outcome.output.clone();
         let output = match definition.pointer("/output/as") {
             Some(output) => expr::evaluate_field(output, &outcome.output, &scope)
@@ -574,6 +611,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
         };
         schema::check(definition, "output", &output).map_err(|e| e.at(reference))?;
         if let Some(export) = definition.get("export") {
+            // Without `as`, the context stays as it is, and is only checked.
             let context = match export.get("as") {
                 Some(export) => {
                     scope.output = output.clone();
@@ -582,7 +620,9 @@ impl<'h, H: Host> Interpreter<'h, H> {
                 None => scope.context.clone(),
             };
             schema::check(definition, "export", &context).map_err(|e| e.at(reference))?;
-            self.set_context(context);
+            if export.get("as").is_some() {
+                self.set_context(context);
+            }
         }
 
         let flow = outcome.flow.unwrap_or_else(|| {
