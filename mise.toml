@@ -1,0 +1,48 @@
+[tools]
+rust = { version = "1.99.0", components = "clippy,rustfmt" }
+rumdl = "0.2.79"
+# The Temporal CLI, which includes the dev server that tests and local runs use.
+"aqua:temporalio/cli" = "1.9.1"
+# The Temporal SDK compiles its protobuf definitions at build time.
+protoc = "36.2"
+
+[tasks.build]
+description = "Build the marche binary"
+run = "cargo build"
+
+[tasks.test]
+description = "Run unit tests and the cucumber features"
+run = [{ task = "test:unit" }, { task = "test:features" }]
+
+[tasks."test:unit"]
+description = "Run unit tests, and check the examples against the Open Workflow schema"
+run = "cargo test --bins --test examples"
+
+[tasks."test:features"]
+description = "Run marche's features and the Open Workflow conformance kit"
+run = "cargo test --test cucumber"
+
+[tasks.lint]
+description = "Check formatting, run clippy, and lint Markdown"
+run = [
+  "cargo fmt --check",
+  "cargo clippy --all-targets -- -D warnings",
+  "rumdl check",
+]
+
+[tasks.fmt]
+description = "Format the code and Markdown"
+run = ["cargo fmt", "rumdl check --fix"]
+
+[tasks.dist]
+description = "Build a release archive for this platform in dist/"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+cargo build --release --locked
+pkgid=$(cargo pkgid)
+version=${pkgid##*[#@]}
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+mkdir -p dist
+tar -czf "dist/marche-$version-$os-$(uname -m).tar.gz" -C target/release marche
+'''
