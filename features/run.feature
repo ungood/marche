@@ -151,24 +151,27 @@ Feature: marche run
       """
 
   Scenario: A task type marche doesn't support yet is rejected before the run starts
-    Given the file "pause.yaml":
+    Given the file "ready.yaml":
       """yaml
       document:
         dsl: '1.0.4'
         namespace: examples
-        name: pause
+        name: ready
         version: '0.1.0'
       do:
-        - pause:
-            wait:
-              seconds: 1
+        - ready:
+            listen:
+              to:
+                one:
+                  with:
+                    type: com.example.ready
       """
-    When I run "marche run pause.yaml"
+    When I run "marche run ready.yaml"
     Then the command fails
     And the error says:
       """
-      pause.yaml can't run on marche yet.
-      /do/0/pause is a wait task, which marche doesn't support yet.
+      ready.yaml can't run on marche yet.
+      /do/0/ready is a listen task, which marche doesn't support yet.
       """
 
   Scenario: A definition that isn't valid OWS is rejected before the run starts

@@ -119,6 +119,15 @@ impl Host for WorkflowHost {
     }
 
     fn timer(&self, duration: Duration, token: &Token) -> LocalBoxFuture<'_, Result<(), Halt>> {
+        // Temporal rejects timers that don't wait at all.
+        if duration.is_zero() {
+            let result = if token.is_cancelled() {
+                Err(Halt::Cancelled)
+            } else {
+                Ok(())
+            };
+            return async move { result }.boxed_local();
+        }
         let options = TimerOptions::builder(duration)
             .cancellation_token(token.clone())
             .build();

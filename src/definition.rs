@@ -19,7 +19,7 @@ static SCHEMA: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
 });
 
 /// Task types the interpreter runs. `run` is checked by process.
-const SUPPORTED_TASKS: &[&str] = &["do", "set", "run", "switch", "raise"];
+const SUPPORTED_TASKS: &[&str] = &["do", "set", "run", "switch", "raise", "try", "wait"];
 /// `do` comes last, because `for` tasks have a `do` too.
 const TASK_TYPES: &[&str] = &[
     "call", "emit", "for", "fork", "listen", "raise", "run", "set", "switch", "try", "wait", "do",
@@ -175,13 +175,18 @@ fn check_list(list: &Value, path: &str, problems: &mut Vec<String>) {
                 problems.push(format!("{reference} uses await: false, which marche doesn't support, because the process would outlive the run."));
             }
         }
-        if let Some(target) = task["then"].as_str()
-            && !["continue", "exit", "end"].contains(&target)
-            && !tasks.iter().any(|(name, _)| *name == target)
-        {
-            problems.push(format!(
-                "{reference} has then: {target}, but its list has no task named {target}."
-            ));
+        for (field, then) in [
+            ("then", &task["then"]),
+            ("catch.then", &task["catch"]["then"]),
+        ] {
+            if let Some(target) = then.as_str()
+                && !["continue", "exit", "end"].contains(&target)
+                && !tasks.iter().any(|(name, _)| *name == target)
+            {
+                problems.push(format!(
+                    "{reference} has {field}: {target}, but its list has no task named {target}."
+                ));
+            }
         }
         if let Some(name) = task.pointer("/raise/error").and_then(Value::as_str) {
             problems.push(format!(
@@ -204,7 +209,31 @@ fn check_list(list: &Value, path: &str, problems: &mut Vec<String>) {
         if kind == "do" {
             check_list(&task["do"], &format!("{reference}/do"), problems);
         }
+        if kind == "try" {
+            check_try(task, &reference, problems);
+        }
     }
+}
+
+/// What marche doesn't support yet in a `try` task, and its task lists.
+fn check_try(task: &Value, reference: &str, problems: &mut Vec<String>) {
+    let retry = &task["catch"]["retry"];
+    if let Some(name) = retry.as_str() {
+        problems.push(format!(
+            "{reference} uses catch.retry: {name}, which marche doesn't support yet."
+        ));
+    }
+    if retry.pointer("/limit/attempt/duration").is_some() {
+        problems.push(format!(
+            "{reference} uses catch.retry.limit.attempt.duration, which marche doesn't support yet."
+        ));
+    }
+    check_list(&task["try"], &format!("{reference}/try"), problems);
+    check_list(
+        &task["catch"]["do"],
+        &format!("{reference}/catch/do"),
+        problems,
+    );
 }
 
 #[cfg(test)]
@@ -218,7 +247,7 @@ mod tests {
         let definition = json!({
             "timeout": {"after": {"minutes": 1}},
             "do": [
-                {"pause": {"wait": {"seconds": 1}}},
+                {"ready": {"listen": {"to": {"one": {"with": {"type": "ready"}}}}}},
                 {"outer": {"do": [{"inner": {"set": {}, "timeout": {"after": {"seconds": 1}}}}]}},
                 {"jump": {"set": {}, "then": "nowhere"}},
                 {"loop": {"for": {"in": ".items"}, "do": []}},
@@ -228,7 +257,7 @@ mod tests {
             unsupported(&definition),
             [
                 "The workflow uses /timeout, which marche doesn't support yet.",
-                "/do/0/pause is a wait task, which marche doesn't support yet.",
+                "/do/0/ready is a listen task, which marche doesn't support yet.",
                 "/do/1/outer/do/0/inner uses timeout, which marche doesn't support yet.",
                 "/do/2/jump has then: nowhere, but its list has no task named nowhere.",
                 "/do/3/loop is a for task, which marche doesn't support yet.",
@@ -269,5 +298,38 @@ mod tests {
             serde_yaml_ng::from_str(include_str!("../examples/review-loop.yaml")).unwrap();
         assert!(SCHEMA.is_valid(&review));
         assert_eq!(unsupported(&review), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_examples_gate_is_supported() {
+        let gate: Value = serde_yaml_ng::from_str(include_str!("../examples/gate.yaml")).unwrap();
+        assert_eq!(unsupported(&gate), Vec::<String>::new());
+    }
+
+    #[test]
+    fn checks_try_tasks_and_their_lists() {
+        let definition = json!({
+            "do": [
+                {"named": {"try": [], "catch": {"retry": "patient"}}},
+                {"timed": {
+                    "try": [{"ready": {"listen": {"to": {}}}}],
+                    "catch": {
+                        "retry": {"limit": {"attempt": {"duration": "PT1M"}}},
+                        "then": "nowhere",
+                        "do": [{"inner": {"set": {}, "timeout": {"after": "PT1S"}}}],
+                    },
+                }},
+            ]
+        });
+        assert_eq!(
+            unsupported(&definition),
+            [
+                "/do/0/named uses catch.retry: patient, which marche doesn't support yet.",
+                "/do/1/timed has catch.then: nowhere, but its list has no task named nowhere.",
+                "/do/1/timed uses catch.retry.limit.attempt.duration, which marche doesn't support yet.",
+                "/do/1/timed/try/0/ready is a listen task, which marche doesn't support yet.",
+                "/do/1/timed/catch/do/0/inner uses timeout, which marche doesn't support yet.",
+            ]
+        );
     }
 }

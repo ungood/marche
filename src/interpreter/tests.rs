@@ -1,5 +1,8 @@
 //! Interpreter tests against a fake host.
 
+mod try_catch;
+mod wait;
+
 use std::cell::RefCell;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -10,19 +13,21 @@ use serde_json::{Value, json};
 use super::*;
 use crate::shell::{ShellRequest, ShellResult};
 
-/// A host that records task events and timers, and answers shell steps from
-/// a script. Tests for new task types can extend it.
+/// A host that records task events, timers and random draws, and answers shell
+/// steps from a script. Its clock moves on only when a timer fires. Tests for
+/// new task types can extend it.
 #[derive(Default)]
 struct FakeHost {
     events: RefCell<Vec<String>>,
     requests: RefCell<Vec<ShellRequest>>,
     results: RefCell<Vec<ShellResult>>,
     timers: RefCell<Vec<Duration>>,
+    streams: RefCell<Vec<String>>,
 }
 
 impl Host for FakeHost {
     fn now(&self) -> SystemTime {
-        UNIX_EPOCH + Duration::from_secs(1_700_000_000)
+        UNIX_EPOCH + Duration::from_secs(1_700_000_000) + self.timers.borrow().iter().sum()
     }
 
     fn task_started(&self, reference: &str, _name: &str) {
@@ -67,7 +72,8 @@ impl Host for FakeHost {
         async move { result }.boxed_local()
     }
 
-    fn random(&self, _stream: &str) -> f64 {
+    fn random(&self, stream: &str) -> f64 {
+        self.streams.borrow_mut().push(stream.to_string());
         0.5
     }
 
