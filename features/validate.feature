@@ -6,7 +6,8 @@ Feature: marche validate
   marche supports: its task types and settings, jq expressions in strict mode,
   `then` targets that exist, and the parallel `for` extension's settings in
   their documented shape. Every problem is reported at once, each pointing at
-  its line in the file. It exits with 0 when the definition can run, 1 when it
+  its line in the file: the schema's, and marche's own in the parts the schema
+  accepts. It exits with 0 when the definition can run, 1 when it
   can't, and 2 when marche can't read the file.
 
   Scenario: A definition marche can run is valid
@@ -438,3 +439,29 @@ Feature: marche validate
       /do/0/serve uses await: false, which marche doesn't support, because the process would outlive the run.
       """
     And the error points at line 11 of "detach.yaml"
+
+  @wip
+  Scenario: Schema problems and marche's own are reported together
+    Given the file "both.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: both
+      do:
+        - fetch:
+            call: http
+            with:
+              method: get
+              endpoint: https://example.com
+      """
+    When I run "marche validate both.yaml"
+    Then the command fails with exit code 1
+    And the error says:
+      """
+      both.yaml isn't a valid workflow definition.
+      /document: "version" is a required property
+      /do/0/fetch is a call task, which marche doesn't support yet.
+      """
+    And the error points at line 1 of "both.yaml"
+    And the error points at line 7 of "both.yaml"

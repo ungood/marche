@@ -9,7 +9,7 @@ use serde_json::Value;
 use tokio::process::Command;
 
 use super::shell::{PATIENCE, wait_until};
-use super::world::{MarcheWorld, marche};
+use super::world::{MarcheWorld, marche, output_of};
 
 /// marche, to run from the directory that holds `path` in the scenario, and
 /// the file's name.
@@ -83,11 +83,7 @@ async fn list(address: &str, query: &str) -> Vec<Value> {
 #[given(regex = r#"^"([^"]+)" has run$"#)]
 async fn has_run(world: &mut MarcheWorld, path: String) {
     let (mut command, name) = marche_beside(world, &path).await;
-    let output = command
-        .args(["run", &name, "--json"])
-        .output()
-        .await
-        .expect("run marche run");
+    let output = output_of(command.args(["run", &name, "--json"])).await;
     let result: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(
             "marche run didn't print JSON ({error}):\n{}",
@@ -157,4 +153,23 @@ async fn started_without_worker(world: &mut MarcheWorld, id: String) {
         String::from_utf8_lossy(&output.stderr)
     );
     wait_listed(&address, &format!("WorkflowId = '{id}'")).await;
+}
+
+#[given("the run has been terminated")]
+async fn terminated(world: &mut MarcheWorld) {
+    let id = world.run_id.clone().expect("no run has started");
+    let address = world.address().await;
+    let output = Command::new("temporal")
+        .args(["workflow", "terminate", "--address", &address])
+        .args(["--workflow-id", &id])
+        .output()
+        .await
+        .expect("run temporal workflow terminate");
+    assert!(
+        output.status.success(),
+        "temporal workflow terminate failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let query = format!("WorkflowId = '{id}' AND ExecutionStatus != 'Running'");
+    wait_listed(&address, &query).await;
 }

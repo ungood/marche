@@ -5,7 +5,10 @@ Feature: marche run
   standard error as it starts and finishes, and the workflow's output on
   standard output: a string as plain text, anything else as JSON. `-v` adds
   each finished task's output or error to its line, and `-q` prints only the
-  workflow's output. `--json` prints the result as one JSON object instead, and
+  workflow's output. A task's finish line comes after the lines of the tasks
+  inside it. While it waits, it says on standard error when no worker is
+  serving the task queue `marche`, unless `-q` is given. `--json` prints the
+  result as one JSON object instead, with a terminated run as cancelled, and
   `--detach` prints the run ID and returns without waiting.
 
   It exits with 0 when the run completes, 1 when it faults or is cancelled or
@@ -536,3 +539,98 @@ Feature: marche run
     When the workflow is cancelled
     Then the command fails with exit code 1
     And the workflow should cancel
+
+  @wip
+  Scenario: A run says when no worker is serving its task queue
+    Given a Temporal server with no worker
+    And the file "hello.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: hello
+        version: '0.1.0'
+      do:
+        - greet:
+            set:
+              name: world
+      """
+    When I run "marche run hello.yaml" for 3 seconds
+    Then the command is still running
+    And the error says:
+      """
+      No worker is serving the task queue marche, so the run is waiting for one. Start one with `marche worker`.
+      """
+
+  Scenario: -q leaves out the hint that no worker is serving the task queue
+    Given a Temporal server with no worker
+    And the file "hello.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: hello
+        version: '0.1.0'
+      do:
+        - greet:
+            set:
+              name: world
+      """
+    When I run "marche run hello.yaml -q" for 3 seconds
+    Then the command is still running
+    And marche doesn't print:
+      """
+      No worker is serving the task queue marche
+      """
+
+  @wip
+  Scenario: A task finishes after the tasks inside it
+    Given the file "cook.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: cook
+        version: '0.1.0'
+      do:
+        - cook:
+            fork:
+              branches:
+                - burn:
+                    run:
+                      shell:
+                        command: sleep 1; exit 1
+                - simmer:
+                    do:
+                      - stir:
+                          run:
+                            shell:
+                              command: sleep 60
+      """
+    When I run "marche run cook.yaml"
+    Then the command fails with exit code 1
+    And marche prints, in order:
+      """
+      cancelled /do/0/cook/fork/branches/1/simmer/do/0/stir
+      cancelled /do/0/cook/fork/branches/1/simmer
+      faulted /do/0/cook
+      """
+
+  @wip
+  Scenario: --json prints a terminated run as cancelled
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: terminate
+        version: '0.1.0'
+      do:
+        - simmer:
+            run:
+              shell:
+                command: sleep 60
+      """
+    And the workflow is running its simmer task
+    When the workflow is terminated
+    Then the workflow should cancel

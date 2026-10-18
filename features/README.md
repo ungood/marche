@@ -24,21 +24,26 @@ Setup:
 - `the environment variable "<name>" is "<value>"` sets a variable for `I run`, after the ones above.
 - `Temporal's configuration file says:` with TOML as a doc string, written to the file `TEMPORAL_CONFIG_FILE` names.
 - `a worker started with "marche worker <flags>"` starts the scenario's own server, and a worker with those flags.
+- `a Temporal server with no worker` starts the scenario's own server, without a worker.
+- `the worker has stopped` kills the scenario's own worker with SIGKILL, as a crash would. Temporal goes on listing it as a poller for a while.
 - `"<path>" has run` runs `marche run <path>` from the file's directory and waits for the run to end, however it ends, and for Temporal's visibility to list it as ended.
 - `"<path>" is running its <task> task` runs `marche run <path> --detach` from the file's directory, and waits until the task has started and visibility lists the run.
+- `the run has been terminated` terminates the run the scenario started last with `temporal workflow terminate`, and waits for visibility to list it as ended.
 - `the run "<id>" has started on a task queue no worker serves` starts a `marche.interpret` workflow with that ID on the task queue `elsewhere`, with `temporal workflow start`.
 - `the worker continues runs as new after every <n> tasks` gives the scenario a server and worker of its own. The worker continues each run as new once `<n>` tasks have finished in it, through the hidden test hook `marche worker --continue-as-new-after <n>`.
 
 Action:
 
-- `I run "<command>"` runs marche in the scenario's directory. The command is split into words as a shell would, so `--input '{"name": "Ada"}'` is one argument.
+- `I run "<command>"` runs marche in the scenario's directory. The command is split into words as a shell would, so `--input '{"name": "Ada"}'` is one argument. A command that doesn't end within three minutes fails the step.
+- `I run "<command>" for <n> seconds` does the same for a command that may not end by itself, and stops it with SIGTERM if it's still running after that long.
 - `the worker is killed and started again` kills the scenario's own worker with SIGKILL, starts a new one, and waits for the run started by `the workflow is running its <task> task`.
 - `the worker is killed and started again during each of <n> attempts` does the same once each attempt at the running step has started, by the step's logs, and then waits for the run.
-- `the workflow is cancelled` cancels the run started by `the workflow is running its <task> task` with `temporal workflow cancel`, and waits for it to stop. It stands in for `marche cancel` until that command exists.
+- `the workflow is cancelled` cancels the run started by `the workflow is running its <task> task` with `marche cancel $RUN`, and waits for it to stop.
+- `the workflow is terminated` terminates that run with `temporal workflow terminate`, which skips its cleanup, and waits for `marche run` to report it.
 
 Outcome:
 
-- `the command succeeds`, `the command fails`, `the command fails with exit code <n>`
+- `the command succeeds`, `the command fails`, `the command fails with exit code <n>`, and `the command is still running` after `I run "<command>" for <n> seconds`.
 - `the output says:` with the expected text as a doc string. Each line must appear in standard output, after colors and miette's decoration are removed and whitespace is collapsed.
 - `the output says, in order:` and `marche prints, in order:` check the same, and that each line appears after the one before it. `marche prints, in order:` reads standard error before standard output.
 - `the output is marche's version`: standard output is `marche <version>`, where the version is what `git describe --tags --match 'v[0-9]*'` says for the checkout, without the `v`, or `0.0.0-development` when there's no release tag.

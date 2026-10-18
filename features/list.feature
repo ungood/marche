@@ -2,7 +2,8 @@ Feature: marche list
 
   `marche list` lists the runs started from the current directory, newest
   first, with each run's ID, definition, status and start time. `--all` lists
-  the runs started from every directory. `--json` prints
+  the runs started from every directory, and `-n/--limit` keeps only the
+  newest. It says there are no runs only when none match. `--json` prints
   `{"runs": [{"run", "definition", "status", "started", "directory"}]}`.
 
   Scenario: List prints a line for each run
@@ -171,4 +172,74 @@ Feature: marche list
     And the JSON output contains:
       """json
       {"runs": [{"run": "$RUN", "definition": "examples.courses:0.1.0", "status": "completed"}]}
+      """
+
+  Scenario: --limit keeps only the newest runs
+    Given the file "first.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: first
+        version: '0.1.0'
+      do:
+        - greet:
+            set:
+              name: first
+      """
+    And the file "second.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: second
+        version: '0.1.0'
+      do:
+        - greet:
+            set:
+              name: second
+      """
+    And "first.yaml" has run
+    And "second.yaml" has run
+    When I run "marche list -n 1 --json"
+    Then the command succeeds
+    And the JSON output contains:
+      """json
+      {"runs": [{"run": "$RUN", "definition": "examples.second:0.1.0"}]}
+      """
+
+  @wip
+  Scenario: A limit of 0 lists nothing, without saying there are no runs
+    Given the file "shape.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: shape
+        version: '0.1.0'
+      do:
+        - setShape:
+            set:
+              shape: circle
+      """
+    And "shape.yaml" has run
+    When I run "marche list --limit 0"
+    Then the command succeeds
+    And marche doesn't print:
+      """
+      $RUN
+      No runs were started from this directory.
+      """
+
+  @wip
+  Scenario: A namespace that doesn't exist is an error
+    When I run "marche list --namespace nope"
+    Then the command fails with exit code 2
+    And the error says:
+      """
+      Temporal has no namespace nope.
+      """
+    And the help says:
+      """
+      Create it with `temporal operator namespace create nope`, or choose another with --namespace or TEMPORAL_NAMESPACE.
       """

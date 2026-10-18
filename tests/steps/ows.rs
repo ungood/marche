@@ -14,7 +14,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use super::services::Services;
-use super::world::{MarcheWorld, Pending, docstring, marche};
+use super::world::{MarcheWorld, Pending, docstring, marche, output_of};
 use super::{inspect, shell};
 
 /// Task types the interpreter supports. A conformance scenario runs only when
@@ -205,7 +205,7 @@ async fn restart_worker(world: &mut MarcheWorld) {
 /// Runs marche and parses its standard output, whatever the exit code, since a
 /// faulted workflow still reports its result.
 async fn json(command: &mut Command) -> Value {
-    let output = command.output().await.expect("run marche");
+    let output = output_of(command).await;
     serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(
             "marche didn't print JSON ({error}):\n{}\n{}",

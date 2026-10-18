@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
-use std::process::Output;
+use std::process::{Output, Stdio};
+use std::time::Duration;
 
 use cucumber::World;
 use serde_json::Value;
 use tempfile::TempDir;
-use tokio::process::Child;
+use tokio::io::AsyncReadExt;
+use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 
 use super::services::Services;
@@ -15,6 +17,8 @@ pub struct MarcheWorld {
     root: TempDir,
     /// The result of the last `I run`.
     pub last: Option<Output>,
+    /// Whether the last `I run ... for <n> seconds` was still running when stopped.
+    pub still_running: bool,
     /// The workflow definition from `a workflow with definition:`.
     pub definition: Option<String>,
     /// The input from `the workflow input is:`.
@@ -54,6 +58,7 @@ impl MarcheWorld {
         Self {
             root,
             last: None,
+            still_running: false,
             definition: None,
             input: None,
             run: None,
@@ -120,6 +125,68 @@ impl MarcheWorld {
         std::fs::write(&path, content).expect("write test file");
         path
     }
+}
+
+/// How long a command that should end by itself may take.
+pub const COMMAND_PATIENCE: Duration = Duration::from_secs(180);
+
+/// Runs a command, and fails the step if it doesn't end within
+/// `COMMAND_PATIENCE`.
+pub async fn output_of(command: &mut Command) -> Output {
+    let (output, stopped) = output_within(command, COMMAND_PATIENCE).await;
+    assert!(
+        !stopped,
+        "{command:?} didn't end within {COMMAND_PATIENCE:?}:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+/// Runs a command for up to `limit`, and stops it if it's still running then:
+/// with SIGTERM, and SIGKILL five seconds later. Says whether it was stopped.
+pub async fn output_within(command: &mut Command, limit: Duration) -> (Output, bool) {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap_or_else(|error| panic!("start {command:?}: {error}"));
+    let mut stdout = child.stdout.take().expect("standard output");
+    let mut stderr = child.stderr.take().expect("standard error");
+    let stdout = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes).await;
+        bytes
+    });
+    let stderr = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        let _ = stderr.read_to_end(&mut bytes).await;
+        bytes
+    });
+    let (status, stopped) = match tokio::time::timeout(limit, child.wait()).await {
+        Ok(status) => (status.expect("wait for the command"), false),
+        Err(_) => {
+            if let Some(pid) = child.id() {
+                let pid = libc::pid_t::try_from(pid).expect("process ID");
+                // SAFETY: kill only sends a signal, to a process this test started.
+                unsafe { libc::kill(pid, libc::SIGTERM) };
+            }
+            let status = match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+                Ok(status) => status.expect("wait for the command"),
+                Err(_) => {
+                    let _ = child.start_kill();
+                    child.wait().await.expect("wait for the command")
+                }
+            };
+            (status, true)
+        }
+    };
+    let output = Output {
+        status,
+        stdout: stdout.await.expect("read standard output"),
+        stderr: stderr.await.expect("read standard error"),
+    };
+    (output, stopped)
 }
 
 /// The marche binary under test.

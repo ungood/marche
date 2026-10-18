@@ -200,3 +200,28 @@ Feature: For
       instance: /do/0/serve/do/0/plate
       """
     And plate should run 2 times
+
+  Scenario: Cancelling a run cancels the running iteration and starts no more
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: for-cancel
+        version: '0.1.0'
+      do:
+        - cook:
+            for:
+              in: [ soup, fish, rice ]
+            do:
+              - simmer:
+                  run:
+                    shell:
+                      command: sleep 60
+      """
+    And the workflow is running its simmer task
+    When the workflow is cancelled
+    Then the workflow should cancel
+    And simmer should cancel
+    And simmer should run 1 time
+    And cook should cancel
