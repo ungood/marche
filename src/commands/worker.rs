@@ -14,9 +14,11 @@ pub async fn worker(target: &Target) -> Result<ExitCode, Error> {
     temporal.register_search_attributes().await?;
     let runtime = Runtime::from_current_tokio(Default::default())
         .map_err(|error| Error::Worker(error.to_string()))?;
+    let marche = std::env::current_exe().map_err(|error| Error::Worker(error.to_string()))?;
     let options = WorkerOptions::new(TASK_QUEUE)
         .register_activities(ShellActivities {
             state_dir: state_dir(),
+            marche,
         })
         .register_workflow::<Interpret>()
         .map_err(|error| Error::Worker(error.to_string()))?

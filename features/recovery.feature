@@ -36,7 +36,6 @@ Feature: Crash recovery
       """
     And prepare should run before simmer
 
-  @wip
   Scenario: A worker crash stops the step's processes before the step runs again
     Given a workflow with definition:
       """yaml

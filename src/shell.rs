@@ -1,6 +1,7 @@
 //! The `marche.shell` activity, which runs a `run: shell` step.
 
 use std::collections::BTreeMap;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -21,7 +22,10 @@ const CAPTURE_LIMIT: usize = 256 * 1024;
 const DETAIL_LIMIT: usize = 2 * 1024;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
 /// How long a cancelled step has between SIGTERM and SIGKILL.
-const TERMINATION_GRACE: Duration = Duration::from_secs(10);
+pub const TERMINATION_GRACE: Duration = Duration::from_secs(10);
+/// How long a cancelled step's guard has to stop it, beyond the grace period,
+/// before the activity stops waiting.
+const GUARD_MARGIN: Duration = Duration::from_secs(5);
 
 /// A shell step with its expressions evaluated.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -73,6 +77,8 @@ pub fn state_dir() -> PathBuf {
 
 pub struct ShellActivities {
     pub state_dir: PathBuf,
+    /// The marche binary, which runs each step under `marche guard`.
+    pub marche: PathBuf,
 }
 
 #[activities]
@@ -91,7 +97,7 @@ impl ShellActivities {
             .join(run)
             .join(request.reference.trim_start_matches('/'));
         let attempt = info.attempt;
-        run_step(&ctx, &request, &logs, attempt).await
+        run_step(&ctx, &self.marche, &request, &logs, attempt).await
     }
 }
 
@@ -114,6 +120,7 @@ fn failed_to_start(request: &ShellRequest, error: std::io::Error) -> ActivityErr
 
 async fn run_step(
     ctx: &ActivityContext,
+    marche: &Path,
     request: &ShellRequest,
     logs: &Path,
     attempt: u32,
@@ -123,8 +130,20 @@ async fn run_step(
     let stdout_log = logs.join(format!("{attempt}.stdout"));
     let stderr_log = logs.join(format!("{attempt}.stderr"));
 
-    let mut child = Command::new("/bin/sh")
-        .arg("-c")
+    // The guard stops the step when this pipe's write end closes: when the
+    // step is cancelled, or when the worker dies, however it dies.
+    let (lifeline, lifeline_held) = std::io::pipe().map_err(start)?;
+    let fd = lifeline.as_raw_fd();
+    let mut command = Command::new(marche);
+    command
+        .args([
+            "guard",
+            "--lifeline",
+            &fd.to_string(),
+            "--",
+            "/bin/sh",
+            "-c",
+        ])
         .arg(&request.command)
         .arg("sh")
         .args(&request.arguments)
@@ -133,10 +152,20 @@ async fn run_step(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .process_group(0)
-        .spawn()
-        .map_err(start)?;
-    let group = child.id().map(|pid| pid as libc::pid_t);
+        // A group of its own, so signals to the worker's group pass it by.
+        .process_group(0);
+    // SAFETY: fcntl is async-signal-safe. It clears close-on-exec on the
+    // pipe's read end, so the guard inherits it.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().map_err(start)?;
+    drop(lifeline);
 
     let stdin = child.stdin.take();
     let input = request.stdin.clone().unwrap_or_default();
@@ -171,29 +200,14 @@ async fn run_step(
                 });
             }
             () = ctx.cancelled() => {
-                if let Some(group) = group {
-                    terminate(group, &mut finished).await;
-                }
+                drop(lifeline_held);
+                let _ = tokio::time::timeout(TERMINATION_GRACE + GUARD_MARGIN, finished).await;
                 return Err(ActivityError::cancelled());
             }
             _ = heartbeat.tick() => {
                 let _ = ctx.record_heartbeat(()).await;
             }
         }
-    }
-}
-
-/// Sends SIGTERM to the step's process group, then SIGKILL if it's still
-/// running after the grace period.
-async fn terminate(group: libc::pid_t, finished: impl Future) {
-    // SAFETY: killpg only sends a signal; the group is the one this step started.
-    unsafe { libc::killpg(group, libc::SIGTERM) };
-    if tokio::time::timeout(TERMINATION_GRACE, finished)
-        .await
-        .is_err()
-    {
-        // SAFETY: as above.
-        unsafe { libc::killpg(group, libc::SIGKILL) };
     }
 }
 
