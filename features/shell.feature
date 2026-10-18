@@ -333,3 +333,56 @@ Feature: Shell steps
     Then the workflow should cancel
     And simmer should cancel
     And the process whose ID is in "simmer.pid" has stopped
+
+  Scenario: A command that can't start faults without retrying
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: no-directory
+        version: '0.1.0'
+      do:
+        - check:
+            run:
+              shell:
+                command: echo ready
+                directory: pantry
+      """
+    When the workflow is executed
+    Then the workflow should fault with error:
+      """yaml
+      type: https://open-workflow-specification.org/spec/1.0.0/errors/runtime
+      status: 500
+      title: Command failed to start
+      instance: /do/0/check
+      """
+    And check should run 1 time
+
+  Scenario Outline: A signal to a step's guard stops the step
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: guard-signal
+        version: '0.1.0'
+      do:
+        - simmer:
+            run:
+              shell:
+                command: sleep 60 & echo $! > simmer.pid; kill -<signal> $PPID; wait $!
+              return: code
+      """
+    When the workflow is executed
+    Then the workflow should complete with output:
+      """yaml
+      143
+      """
+    And the process whose ID is in "simmer.pid" has stopped
+
+    Examples:
+      | signal |
+      | TERM   |
+      | INT    |
+      | HUP    |

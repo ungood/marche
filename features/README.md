@@ -69,5 +69,6 @@ marche adds steps of its own that read the same results:
 
 - `<task> should run <n> times` counts the tasks of that name that started.
 - `the workflow should have continued as new <n> times` counts the Temporal runs with the workflow's ID, which is one more than the times it continued as new.
+- `the workflow output's '<path>' property is marche's version` compares it with the version `the output is marche's version` expects.
 
 A kit scenario runs only when every task type in its definition is in `SUPPORTED` in `tests/steps/ows.rs`. Add a task type there when the interpreter supports it. A `run` task's type is its process, as in `run: shell`. marche's own scenarios always run, and the test run fails if one of them uses a task type that isn't in `SUPPORTED`, since that means the filter misreads definitions.

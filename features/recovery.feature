@@ -7,7 +7,8 @@ Feature: Crash recovery
   Shell steps should therefore be safe to run twice. Each step runs under a
   guard process that stops the step's processes as soon as its worker dies, so
   two attempts at a step never run at once. A step whose worker is lost three
-  times faults with a runtime error.
+  times faults with a runtime error. Waits and timeouts are durable Temporal
+  timers, so they carry on across a worker restart too.
 
   Scenario: A run finishes after its worker is killed during a step
     Given a workflow with definition:
@@ -95,4 +96,52 @@ Feature: Crash recovery
       status: 500
       title: Step lost
       instance: /do/0/simmer
+      """
+
+  Scenario: A wait carries on after its worker is killed
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: wait-restart
+        version: '0.1.0'
+      do:
+        - prepare:
+            set:
+              dish: soup
+        - rest:
+            wait: PT3S
+      """
+    And the workflow is running its rest task
+    When the worker is killed and started again
+    Then the workflow should complete with output:
+      """yaml
+      dish: soup
+      """
+    And rest should run after prepare
+
+  Scenario: A timeout fires after its worker is killed
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: timeout-restart
+        version: '0.1.0'
+      do:
+        - rest:
+            wait: PT10M
+            timeout:
+              after:
+                seconds: 3
+      """
+    And the workflow is running its rest task
+    When the worker is killed and started again
+    Then the workflow should fault with error:
+      """yaml
+      type: https://open-workflow-specification.org/spec/1.0.0/errors/timeout
+      status: 408
+      detail: The task didn't finish within 3s.
+      instance: /do/0/rest
       """

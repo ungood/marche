@@ -147,8 +147,7 @@ fn output_says_in_order(world: &mut MarcheWorld, step: &Step) {
 
 /// The version `git describe` gives this checkout, without the tag's `v`, or
 /// Cargo.toml's placeholder when there's no release tag to describe.
-#[then("the output is marche's version")]
-async fn output_is_version(world: &mut MarcheWorld) {
+pub async fn marche_version() -> String {
     let described = tokio::process::Command::new("git")
         .args(["describe", "--tags", "--match", "v[0-9]*"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -157,10 +156,16 @@ async fn output_is_version(world: &mut MarcheWorld) {
         .ok()
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
-    let version = described
+    described
         .as_deref()
         .and_then(|tag| tag.strip_prefix('v'))
-        .unwrap_or(env!("CARGO_PKG_VERSION"));
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string()
+}
+
+#[then("the output is marche's version")]
+async fn output_is_version(world: &mut MarcheWorld) {
+    let version = marche_version().await;
     let output = String::from_utf8_lossy(&world.last().stdout);
     assert_eq!(output.trim(), format!("marche {version}"));
 }

@@ -303,6 +303,17 @@ fn has_value(world: &mut MarcheWorld, path: String, step: &Step) {
     );
 }
 
+#[then(regex = r"^the workflow output's '([^']+)' property is marche's version$")]
+async fn has_version(world: &mut MarcheWorld, path: String) {
+    let version = super::run::marche_version().await;
+    let output = &run(world)["output"];
+    assert_eq!(
+        property(output, &path).and_then(Value::as_str),
+        Some(version.as_str()),
+        "{path} in {output:#}"
+    );
+}
+
 #[then(regex = r"^the workflow output should have a '([^']+)' property containing (\d+) items$")]
 fn has_items(world: &mut MarcheWorld, path: String, count: usize) {
     let output = &run(world)["output"];
