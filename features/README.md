@@ -47,6 +47,7 @@ Outcome:
 - `the JSON output contains:` with a JSON doc string. Standard output must be JSON with every field given. An array matches an array of the same length whose items each contain the expected item.
 - `the process whose ID is in "<path>" has stopped` reads a process ID from a file in the scenario's directory and checks that the process has exited.
 - `<task> should have a standard output log of <n> bytes` checks the size of the log `marche show` gives for the task.
+- `each run of <task> has a standard output log of its own, saying:` with a YAML list as a doc string. Each run of the task, in the order they started, must have a log path of its own, and its log must hold the item, without a trailing newline.
 
 Run IDs aren't predictable, so in commands and expected text, `$RUN` stands for the ID of the run the scenario started last with `has run` or `is running`, and `$ULID` for that ID's ULID.
 

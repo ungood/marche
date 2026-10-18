@@ -12,6 +12,16 @@ Feature: Fork
   cancelled. A cancelled branch's shell steps are stopped, and the branch is
   reported as cancelled.
 
+  A branch skipped by its `if` doesn't run. Like any skipped task, its output
+  is its input, so its place in the array holds the fork's input, but it never
+  wins a compete. When every branch is skipped, the fork's output is its
+  input.
+
+  A branch's `then: end` ends the workflow once the fork has finished: the
+  other branches run as usual, and the fork's output is the workflow's output.
+  A branch's other `then` values are ignored, since a branch has no list to
+  continue in.
+
   Scenario: Branches run together, and the output keeps their order
     Given a workflow with definition:
       """yaml
@@ -113,3 +123,136 @@ Feature: Fork
     And fast should complete
     And slow should cancel
     And the process whose ID is in "slow.pid" has stopped
+
+  @wip
+  Scenario: A skipped branch keeps its place with the fork's input
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: fork-skip
+        version: '0.1.0'
+      do:
+        - season:
+            fork:
+              branches:
+                - salt:
+                    if: ${ .salty }
+                    set:
+                      dish: salted
+                - pepper:
+                    set:
+                      dish: peppered
+      """
+    And given the workflow input is:
+      """yaml
+      salty: false
+      """
+    When the workflow is executed
+    Then the workflow should complete with output:
+      """yaml
+      - salty: false
+      - dish: peppered
+      """
+    And salt should run 0 times
+
+  @wip
+  Scenario: With compete, a skipped branch never wins
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: fork-compete-skip
+        version: '0.1.0'
+      do:
+        - race:
+            fork:
+              compete: true
+              branches:
+                - shortcut:
+                    if: ${ false }
+                    set:
+                      winner: shortcut
+                - runner:
+                    run:
+                      shell:
+                        command: echo runner
+      """
+    When the workflow is executed
+    Then the workflow should complete with output:
+      """yaml
+      runner
+      """
+    And runner should complete
+    And shortcut should run 0 times
+
+  @wip
+  Scenario: With compete, a fork whose branches are all skipped passes its input on
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: fork-compete-all-skipped
+        version: '0.1.0'
+      do:
+        - race:
+            fork:
+              compete: true
+              branches:
+                - left:
+                    if: ${ false }
+                    set:
+                      winner: left
+                - right:
+                    if: ${ false }
+                    set:
+                      winner: right
+      """
+    And given the workflow input is:
+      """yaml
+      winner: nobody
+      """
+    When the workflow is executed
+    Then the workflow should complete with output:
+      """yaml
+      winner: nobody
+      """
+    And race should complete
+
+  @wip
+  Scenario: A branch's then end ends the workflow once the fork has finished
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: fork-end
+        version: '0.1.0'
+      do:
+        - cook:
+            fork:
+              branches:
+                - sauce:
+                    set:
+                      sauce: done
+                    then: end
+                - rice:
+                    run:
+                      shell:
+                        command: sleep 0.5 && echo rice
+        - serve:
+            set:
+              served: true
+      """
+    When the workflow is executed
+    Then the workflow should complete with output:
+      """yaml
+      - sauce: done
+      - rice
+      """
+    And rice should complete
+    And cook should complete
+    And serve should run 0 times

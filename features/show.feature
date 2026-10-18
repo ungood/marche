@@ -8,6 +8,7 @@ Feature: marche show
   "error", "log"}]}`. marche asks a worker for the tasks, even after the run
   has ended.
 
+  @wip
   Scenario: Show lists each task with its output and logs
     Given the file "hello.yaml":
       """yaml
@@ -38,9 +39,9 @@ Feature: marche show
       completed /do/1/say
       output: "Hello, world"
       stdout:
-      /runs/$RUN/do/1/say/1.stdout
+      /runs/$RUN/do/1/say/1/1.stdout
       stderr:
-      /runs/$RUN/do/1/say/1.stderr
+      /runs/$RUN/do/1/say/1/1.stderr
       """
 
   Scenario: Show prints a faulted task's error

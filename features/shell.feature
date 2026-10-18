@@ -8,7 +8,8 @@ Feature: Shell steps
   removed, unless `return` asks for something else. A non-zero exit code
   faults the step with a runtime error, unless `return` is `code` or `all`.
   The result keeps the last 256 KiB of each stream, and the step's log keeps
-  all of it. Cancelling the run stops every process the step started.
+  all of it. Each run of a step, such as each iteration of a loop, has logs of
+  its own. Cancelling the run stops every process the step started.
 
   Scenario: Arguments are positional parameters
     Given a workflow with definition:
@@ -243,6 +244,53 @@ Feature: Shell steps
       last: '100000'
       """
     And count should have a standard output log of 588895 bytes
+
+  @wip
+  Scenario: Each run of a step keeps logs of its own
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: logs-per-run
+        version: '0.1.0'
+      do:
+        - serve:
+            for:
+              each: dish
+              in: [ soup, fish ]
+            do:
+              - plate:
+                  run:
+                    shell:
+                      command: echo "$1"
+                      arguments:
+                        - ${ $dish }
+        - cook:
+            for:
+              each: dish
+              in: [ cake, bread, pie ]
+            metadata:
+              marche:
+                parallel: true
+            do:
+              - simmer:
+                  run:
+                    shell:
+                      command: echo "$1"
+                      arguments:
+                        - ${ $dish }
+      """
+    When the workflow is executed
+    Then the workflow should complete
+    And each run of plate has a standard output log of its own, saying:
+      """yaml
+      [ soup, fish ]
+      """
+    And each run of simmer has a standard output log of its own, saying:
+      """yaml
+      [ cake, bread, pie ]
+      """
 
   Scenario: Cancelling a run stops the processes its step started
     Given a workflow with definition:
