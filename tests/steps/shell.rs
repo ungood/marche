@@ -13,10 +13,10 @@ use super::ows::{finish, task};
 use super::world::MarcheWorld;
 
 /// How long a step has to do what a scenario waits for.
-const PATIENCE: Duration = Duration::from_secs(60);
+pub const PATIENCE: Duration = Duration::from_secs(60);
 
 /// Polls until `done` holds, or panics with `what` after `limit`.
-async fn wait_until(limit: Duration, what: &str, mut done: impl AsyncFnMut() -> bool) {
+pub async fn wait_until(limit: Duration, what: &str, mut done: impl AsyncFnMut() -> bool) {
     let deadline = Instant::now() + limit;
     while !done().await {
         assert!(Instant::now() < deadline, "{what}");

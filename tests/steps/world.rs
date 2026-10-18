@@ -27,6 +27,8 @@ pub struct MarcheWorld {
     pub pending: Option<Child>,
     /// Environment variables from `the environment variable ... is ...`.
     pub env: Vec<(String, String)>,
+    /// The ID of the run started last by `has run` or `is running`.
+    pub run_id: Option<String>,
 }
 
 impl MarcheWorld {
@@ -45,6 +47,7 @@ impl MarcheWorld {
             services: None,
             pending: None,
             env: Vec::new(),
+            run_id: None,
         }
     }
 
@@ -78,6 +81,16 @@ impl MarcheWorld {
             Some(services) => services.address.clone(),
             None => super::services::address(),
         }
+    }
+
+    /// `text` with `$RUN` and `$ULID` replaced by the ID of the scenario's run
+    /// and its ULID.
+    pub fn expand(&self, text: &str) -> String {
+        let Some(run) = &self.run_id else {
+            return text.to_string();
+        };
+        let ulid = run.rsplit('-').next().unwrap_or(run);
+        text.replace("$RUN", run).replace("$ULID", ulid)
     }
 
     pub fn last(&self) -> &Output {

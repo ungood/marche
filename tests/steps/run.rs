@@ -38,7 +38,7 @@ async fn worker_started_with(world: &mut MarcheWorld, command: String) {
 
 #[when(regex = r#"^I run "(.+)"$"#)]
 fn i_run(world: &mut MarcheWorld, command: String) {
-    let words = shell_words::split(&command).expect("the command splits into words");
+    let words = shell_words::split(&world.expand(&command)).expect("the command splits into words");
     let (program, args) = words.split_first().expect("the command isn't empty");
     assert_eq!(program, "marche", "commands start with marche");
     let mut run = std::process::Command::new(marche());
@@ -99,9 +99,11 @@ fn fails_with_code(world: &mut MarcheWorld, code: i32) {
     );
 }
 
-/// The doc string's lines, without blank ones.
-fn lines(step: &Step) -> Vec<String> {
-    docstring(step)
+/// The doc string's lines, without blank ones, with `$RUN` and `$ULID`
+/// replaced.
+fn lines(world: &MarcheWorld, step: &Step) -> Vec<String> {
+    world
+        .expand(&docstring(step))
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
@@ -110,9 +112,9 @@ fn lines(step: &Step) -> Vec<String> {
 }
 
 /// Checks that every line of the doc string appears in the text.
-fn says(actual: &[u8], step: &Step, what: &str) {
+fn says(world: &MarcheWorld, actual: &[u8], step: &Step, what: &str) {
     let actual = plain(actual);
-    for line in lines(step) {
+    for line in lines(world, step) {
         assert!(
             actual.contains(&line),
             "{what} doesn't say {line:?}:\n{actual}"
@@ -122,7 +124,7 @@ fn says(actual: &[u8], step: &Step, what: &str) {
 
 #[then("the output says:")]
 fn output_says(world: &mut MarcheWorld, step: &Step) {
-    says(&world.last().stdout, step, "the output");
+    says(world, &world.last().stdout, step, "the output");
 }
 
 /// The version `git describe` gives this checkout, without the tag's `v`, or
@@ -146,7 +148,7 @@ fn output_is_version(world: &mut MarcheWorld) {
 
 #[then("the error says:")]
 fn error_says(world: &mut MarcheWorld, step: &Step) {
-    says(&world.last().stderr, step, "the error");
+    says(world, &world.last().stderr, step, "the error");
 }
 
 #[then("the help says:")]
@@ -155,7 +157,7 @@ fn help_says(world: &mut MarcheWorld, step: &Step) {
     let (_, help) = stderr
         .split_once("help:")
         .unwrap_or_else(|| panic!("the error has no help\n{}", describe(world)));
-    says(help.as_bytes(), step, "the help");
+    says(world, help.as_bytes(), step, "the help");
 }
 
 #[then(regex = r#"^the error points at line (\d+) of "([^"]+)"$"#)]
@@ -173,14 +175,14 @@ fn points_at(world: &mut MarcheWorld, line: usize, file: String) {
 fn prints(world: &mut MarcheWorld, step: &Step) {
     let output = world.last();
     let both = [output.stderr.as_slice(), output.stdout.as_slice()].concat();
-    says(&both, step, "marche");
+    says(world, &both, step, "marche");
 }
 
 #[then("marche doesn't print:")]
 fn doesnt_print(world: &mut MarcheWorld, step: &Step) {
     let output = world.last();
     let both = plain(&[output.stderr.as_slice(), output.stdout.as_slice()].concat());
-    for line in lines(step) {
+    for line in lines(world, step) {
         assert!(!both.contains(&line), "marche prints {line:?}:\n{both}");
     }
 }
@@ -195,7 +197,9 @@ fn worker_prints(world: &mut MarcheWorld, step: &Step) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let log = plain(services.log.lock().expect("worker log lock").as_bytes());
-        let missing = lines(step).into_iter().find(|line| !log.contains(line));
+        let missing = lines(world, step)
+            .into_iter()
+            .find(|line| !log.contains(line));
         match missing {
             None => return,
             Some(line) if Instant::now() >= deadline => {
@@ -209,7 +213,8 @@ fn worker_prints(world: &mut MarcheWorld, step: &Step) {
 #[then("the JSON output contains:")]
 fn json_contains(world: &mut MarcheWorld, step: &Step) {
     let actual: Value = serde_json::from_slice(&world.last().stdout).expect("the output is JSON");
-    let expected: Value = serde_json::from_str(&docstring(step)).expect("the doc string is JSON");
+    let expected: Value =
+        serde_json::from_str(&world.expand(&docstring(step))).expect("the doc string is JSON");
     assert!(
         contains(&actual, &expected),
         "{actual:#} doesn't contain {expected:#}"
