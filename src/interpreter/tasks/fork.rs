@@ -41,8 +41,8 @@ pub async fn execute<H: Host>(
             let result = if scope.is_cancelled() {
                 // An earlier branch settled the fork before this one started.
                 let result = Err(Halt::Cancelled);
-                interpreter.host.task_started(&reference, name);
-                interpreter.host.task_finished(&reference, &result);
+                let record = interpreter.host.task_started(&reference, name);
+                interpreter.host.task_finished(record, &result);
                 result
             } else {
                 interpreter

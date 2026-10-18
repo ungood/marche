@@ -212,6 +212,8 @@ OWS has no way to run a dynamic number of tasks in parallel. `fork` needs its br
 - **Order:** iterations start in item order, each as soon as a slot is free.
 - **Output:** an array of every iteration's output, in item order, whatever order they finished in.
 - **Failure:** with `cancelOnFailure: true`, the first iteration to fault cancels the others, by the statechart rule, and the task faults with that error. With `false`, every iteration runs to the end, and the task then faults with the error of the lowest-indexed iteration that faulted.
+- **Flow:** `then: end` inside an iteration ends that iteration, and the workflow ends once every iteration has finished.
+- **Records:** concurrent iterations run the same tasks under the same references, so the host identifies each task record by an ID it returns when the task starts, not by its reference.
 - **Restrictions:** `while` isn't allowed, because it depends on sequential state. `export` isn't allowed inside the iterations, because concurrent writes to the context would race. `marche validate` rejects both.
 
 ### Portability

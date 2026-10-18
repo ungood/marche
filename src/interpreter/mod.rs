@@ -66,8 +66,11 @@ impl Halt {
 pub trait Host {
     /// The workflow clock, which replays identically.
     fn now(&self) -> SystemTime;
-    fn task_started(&self, reference: &str, name: &str);
-    fn task_finished(&self, reference: &str, result: &Result<Value, Halt>);
+    /// Records that a task started, and returns the record's ID. A reference
+    /// isn't enough to find the record again, because a loop's iterations
+    /// run the same tasks, at the same time when it's parallel.
+    fn task_started(&self, reference: &str, name: &str) -> usize;
+    fn task_finished(&self, record: usize, result: &Result<Value, Halt>);
     /// Runs a shell step. Cancelling `token` stops it, and the future resolves
     /// with [`Halt::Cancelled`] once the step's processes have exited.
     fn shell(
@@ -377,13 +380,13 @@ impl<'h, H: Host> Interpreter<'h, H> {
                 Ok(_) => {}
                 Err(error) => {
                     let result = Err(Halt::Fault(error.at(reference)));
-                    self.host.task_started(reference, name);
-                    self.host.task_finished(reference, &result);
+                    let record = self.host.task_started(reference, name);
+                    self.host.task_finished(record, &result);
                     return result.map(|output| (output, Flow::Continue));
                 }
             }
         }
-        self.host.task_started(reference, name);
+        let record = self.host.task_started(reference, name);
         scope.task["startedAt"] = date_time(self.host.now());
         let result = self
             .execute(name, definition, reference, input, scope, token)
@@ -392,7 +395,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
             .as_ref()
             .map(|(output, _)| output.clone())
             .map_err(Clone::clone);
-        self.host.task_finished(reference, &output);
+        self.host.task_finished(record, &output);
         result
     }
 

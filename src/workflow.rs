@@ -81,7 +81,7 @@ impl Host for WorkflowHost {
         self.ctx.workflow_time().unwrap_or(UNIX_EPOCH)
     }
 
-    fn task_started(&self, reference: &str, name: &str) {
+    fn task_started(&self, reference: &str, name: &str) -> usize {
         self.ctx.state_mut(|state| {
             state.tasks.push(TaskRecord {
                 reference: reference.to_string(),
@@ -91,17 +91,13 @@ impl Host for WorkflowHost {
                 error: None,
                 log: None,
             });
-        });
+            state.tasks.len() - 1
+        })
     }
 
-    fn task_finished(&self, reference: &str, result: &Result<Value, Halt>) {
+    fn task_finished(&self, record: usize, result: &Result<Value, Halt>) {
         self.ctx.state_mut(|state| {
-            let Some(task) = state
-                .tasks
-                .iter_mut()
-                .rev()
-                .find(|task| task.reference == reference && task.status == Status::Running)
-            else {
+            let Some(task) = state.tasks.get_mut(record) else {
                 return;
             };
             match result {

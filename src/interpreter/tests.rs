@@ -23,6 +23,8 @@ use crate::shell::{ShellRequest, ShellResult};
 #[derive(Default)]
 struct FakeHost {
     events: RefCell<Vec<String>>,
+    /// The reference of each task record, by its ID.
+    records: RefCell<Vec<String>>,
     requests: RefCell<Vec<ShellRequest>>,
     results: RefCell<Vec<ShellResult>>,
     timers: RefCell<Vec<Duration>>,
@@ -38,13 +40,17 @@ impl Host for FakeHost {
         UNIX_EPOCH + Duration::from_secs(1_700_000_000) + self.timers.borrow().iter().sum()
     }
 
-    fn task_started(&self, reference: &str, _name: &str) {
+    fn task_started(&self, reference: &str, _name: &str) -> usize {
         self.events
             .borrow_mut()
             .push(format!("started {reference}"));
+        let mut records = self.records.borrow_mut();
+        records.push(reference.to_string());
+        records.len() - 1
     }
 
-    fn task_finished(&self, reference: &str, result: &Result<Value, Halt>) {
+    fn task_finished(&self, record: usize, result: &Result<Value, Halt>) {
+        let reference = self.records.borrow()[record].clone();
         let status = match result {
             Ok(_) => "completed",
             Err(Halt::Fault(_)) => "faulted",

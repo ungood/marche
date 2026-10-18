@@ -20,7 +20,6 @@ Feature: Parallel for
   a parallel loop uses neither `while` nor `export` inside its iterations, as
   `validate.feature` specifies.
 
-  @wip
   Scenario: The output lists every iteration's output in item order
     Given a workflow with definition:
       """yaml
@@ -73,7 +72,6 @@ Feature: Parallel for
       """
     And plate should run 3 times
 
-  @wip
   Scenario: Without maxConcurrency, every iteration runs at once
     Given a workflow with definition:
       """yaml
@@ -105,7 +103,6 @@ Feature: Parallel for
       '4'
       """
 
-  @wip
   Scenario: maxConcurrency caps the iterations running at once
     Given a workflow with definition:
       """yaml
@@ -139,7 +136,6 @@ Feature: Parallel for
       """
     And simmer should run 6 times
 
-  @wip
   Scenario: The first iteration to fault cancels the others
     Given a workflow with definition:
       """yaml
@@ -181,7 +177,6 @@ Feature: Parallel for
     And simmer should run 3 times
     And cook should fault
 
-  @wip
   Scenario: With cancelOnFailure false, every iteration finishes and the lowest-indexed error wins
     Given a workflow with definition:
       """yaml
@@ -227,7 +222,6 @@ Feature: Parallel for
     And simmer should run 3 times
     And simmer should fault
 
-  @wip
   Scenario: Cancelling a run cancels its running iterations
     Given a workflow with definition:
       """yaml
