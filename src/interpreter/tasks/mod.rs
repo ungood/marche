@@ -12,8 +12,24 @@ mod switch;
 mod try_catch;
 mod wait;
 
+use serde_json::Value;
+
 use super::{Halt, Host, Interpreter, Outcome, Task};
 use crate::ows;
+
+/// Whether a run may continue as new inside this task: a `do` or a sequential
+/// `for`, whose position is all the state it has. Anything else, including a
+/// task with a `timeout`, has something in flight that a new run would lose.
+pub fn resumable(definition: &Value) -> bool {
+    if definition.get("timeout").is_some() {
+        return false;
+    }
+    if definition.get("for").is_some() {
+        return !for_each::is_parallel(definition);
+    }
+    let others = ["set", "raise", "switch", "fork", "run", "try", "wait"];
+    definition.get("do").is_some() && others.iter().all(|kind| definition.get(kind).is_none())
+}
 
 /// Runs a task by its type, and returns its raw output.
 pub async fn execute<H: Host>(

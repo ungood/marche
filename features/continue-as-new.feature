@@ -14,7 +14,6 @@ Feature: Continuing as new
   These scenarios use a worker that continues runs as new after a few tasks,
   through a test hook, rather than waiting for Temporal to suggest it.
 
-  @wip
   Scenario: A long loop carries on in the next run
     Given the worker continues runs as new after every 3 tasks
     And a workflow with definition:
@@ -66,7 +65,6 @@ Feature: Continuing as new
     And service should complete
     And finish should run last
 
-  @wip
   Scenario: A run waits for a parallel loop to finish before continuing as new
     Given the worker continues runs as new after every 2 tasks
     And a workflow with definition:

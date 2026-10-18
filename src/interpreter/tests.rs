@@ -1,10 +1,11 @@
 //! Interpreter tests against a fake host.
 
+mod continue_as_new;
 mod for_each;
 mod try_catch;
 mod wait;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::task::Poll;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -33,6 +34,10 @@ struct FakeHost {
     /// `Some(n)` finishes after yielding `n` times, and `None` runs until it's
     /// cancelled. Other steps finish at once.
     steps: RefCell<BTreeMap<String, Option<usize>>>,
+    /// Suggests continuing as new once this many tasks have finished since
+    /// `finished` was last reset, as a new run would.
+    continue_after: Cell<Option<usize>>,
+    finished: Cell<usize>,
 }
 
 impl Host for FakeHost {
@@ -55,7 +60,9 @@ impl Host for FakeHost {
             Ok(_) => "completed",
             Err(Halt::Fault(_)) => "faulted",
             Err(Halt::Cancelled) => "cancelled",
+            Err(Halt::ContinueAsNew) => "continued",
         };
+        self.finished.set(self.finished.get() + 1);
         self.events
             .borrow_mut()
             .push(format!("{status} {reference}"));
@@ -118,7 +125,9 @@ impl Host for FakeHost {
     }
 
     fn continue_as_new_suggested(&self) -> bool {
-        false
+        self.continue_after
+            .get()
+            .is_some_and(|after| self.finished.get() >= after)
     }
 }
 

@@ -17,12 +17,14 @@
 //! cancelled when the run is.
 
 pub mod duration;
+pub mod resume;
 pub mod schema;
 mod tasks;
 #[cfg(test)]
 mod tests;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::pin;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -37,12 +39,16 @@ use temporalio_sdk::workflows::select;
 use crate::expr::{self, Scope};
 use crate::ows;
 use crate::shell::{ShellRequest, ShellResult};
+use resume::{Frame, State};
 
 /// Why a task or run stopped without an output.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Halt {
     Fault(ows::Error),
     Cancelled,
+    /// The run stopped to continue as new, and
+    /// [`Interpreter::continuation`] says where.
+    ContinueAsNew,
 }
 
 impl From<ows::Error> for Halt {
@@ -55,14 +61,12 @@ impl Halt {
     pub fn at(self, reference: &str) -> Self {
         match self {
             Self::Fault(error) => Self::Fault(error.at(reference)),
-            Self::Cancelled => Self::Cancelled,
+            other => other,
         }
     }
 }
 
 /// What the interpreter needs from the workflow that runs it.
-// `continue_as_new_suggested` is for continuing as new, still to come.
-#[allow(dead_code)]
 pub trait Host {
     /// The workflow clock, which replays identically.
     fn now(&self) -> SystemTime;
@@ -84,7 +88,8 @@ pub trait Host {
     /// A number in [0, 1) from Temporal's seeded generator, drawn from the named
     /// stream so that one use of randomness doesn't shift another.
     fn random(&self, stream: &str) -> f64;
-    /// Whether Temporal suggests continuing as new, because the history is long.
+    /// Whether to continue as new now, as Temporal suggests when the history is
+    /// long. The interpreter asks only where nothing is in flight.
     fn continue_as_new_suggested(&self) -> bool;
 }
 
@@ -153,6 +158,12 @@ pub struct Interpreter<'h, H> {
     runtime: Value,
     pub directory: String,
     context: RefCell<Value>,
+    /// Where a run that stops to continue as new stopped, built as it unwinds,
+    /// or where a resumed run carries on, taken as it walks back down.
+    frames: RefCell<VecDeque<Frame>>,
+    /// How many tasks around the current point would lose something in flight
+    /// by continuing as new. The run continues as new only when it's zero.
+    blocked: Cell<usize>,
 }
 
 /// How long a task or workflow may run, from its `timeout.after`, which may be
@@ -193,6 +204,8 @@ impl<'h, H: Host> Interpreter<'h, H> {
             definition,
             directory: directory.to_string(),
             context: RefCell::new(json!({})),
+            frames: RefCell::default(),
+            blocked: Cell::new(0),
         }
     }
 
@@ -214,18 +227,46 @@ impl<'h, H: Host> Interpreter<'h, H> {
     /// Runs the workflow on its raw input and returns its transformed output.
     /// Cancelling `token` cancels the run.
     pub async fn run(&mut self, input: Value, token: &Token) -> Result<Value, Halt> {
-        self.workflow["input"] = input.clone();
         self.workflow["startedAt"] = date_time(self.host.now());
+        self.start(input, token).await
+    }
+
+    /// Carries on a run that continued as new, from where `state` says it
+    /// stopped. `input` is the workflow's raw input, as the chain's first run
+    /// got it.
+    pub async fn resume(
+        &mut self,
+        input: Value,
+        state: State,
+        token: &Token,
+    ) -> Result<Value, Halt> {
+        self.workflow["startedAt"] = state.started_at;
+        self.set_context(state.context);
+        *self.frames.get_mut() = state.position.into();
+        self.start(input, token).await
+    }
+
+    async fn start(&mut self, input: Value, token: &Token) -> Result<Value, Halt> {
+        self.workflow["input"] = input.clone();
         let scope = self.scope();
         let definition = self.definition.clone();
-        schema::check(&definition, "input", &input).map_err(|e| e.at("/input"))?;
-        let input = match definition.pointer("/input/from") {
-            Some(from) => expr::evaluate_field(from, &input, &scope).map_err(|e| e.at("/input"))?,
-            None => input,
+        let input = if self.frames.get_mut().is_empty() {
+            schema::check(&definition, "input", &input).map_err(|e| e.at("/input"))?;
+            match definition.pointer("/input/from") {
+                Some(from) => {
+                    expr::evaluate_field(from, &input, &scope).map_err(|e| e.at("/input"))?
+                }
+                None => input,
+            }
+        } else {
+            // The frames carry the current data.
+            Value::Null
         };
         let after = timeout(&definition, &input, &scope).map_err(|e| e.at("/timeout"))?;
         let list = &definition["do"];
         let this = &*self;
+        // A workflow timeout's timer is in flight for the whole run.
+        let _blocked = after.is_some().then(|| this.block());
         let done = this
             .within(after, token, "workflow", |token| async move {
                 this.run_list(list, "/do".into(), input, &token).await
@@ -283,6 +324,56 @@ impl<'h, H: Host> Interpreter<'h, H> {
         Err(ows::Error::timeout(format!("The {what} didn't finish within {after:?}.")).into())
     }
 
+    /// Where a run that halted with [`Halt::ContinueAsNew`] stopped, and what
+    /// the next run needs to carry on from there.
+    pub fn continuation(&self) -> State {
+        State {
+            started_at: self.workflow["startedAt"].clone(),
+            context: self.context.borrow().clone(),
+            position: self.frames.borrow().iter().cloned().collect(),
+        }
+    }
+
+    /// Adds a frame to the front of the position, as the run unwinds to
+    /// continue as new.
+    pub fn suspend(&self, frame: Frame) {
+        self.frames.borrow_mut().push_front(frame);
+    }
+
+    /// Adds the frame of a `do` or `for` task that the run unwinds through.
+    pub fn suspend_task(&self, task: &Task<'_>) {
+        self.suspend(Frame::Task {
+            input: task.scope.task["input"].clone(),
+            transformed: task.input.clone(),
+            started_at: task.scope.task["startedAt"].clone(),
+        });
+    }
+
+    /// Takes the next frame of a resumed run, if `wanted` accepts it.
+    pub fn resume_frame(&self, wanted: impl FnOnce(&Frame) -> bool) -> Option<Frame> {
+        let mut frames = self.frames.borrow_mut();
+        if wanted(frames.front()?) {
+            frames.pop_front()
+        } else {
+            None
+        }
+    }
+
+    /// Marks a task whose work would be lost by continuing as new, until the
+    /// guard drops.
+    fn block(&self) -> Blocked<'_> {
+        self.blocked.set(self.blocked.get() + 1);
+        Blocked(&self.blocked)
+    }
+
+    /// Whether to continue as new before the next task: when the host says so,
+    /// nothing is in flight, and the run isn't still resuming.
+    fn continues_as_new(&self) -> bool {
+        self.blocked.get() == 0
+            && self.frames.borrow().is_empty()
+            && self.host.continue_as_new_suggested()
+    }
+
     /// Runs a task list in order, following `then`. `path` is the list's
     /// reference, such as `/do` or `/do/0/outer/do`.
     pub fn run_list<'a>(
@@ -315,14 +406,32 @@ impl<'h, H: Host> Interpreter<'h, H> {
                 .collect();
             let mut index = 0;
             let mut current = input;
+            let resumed = self
+                .resume_frame(|frame| matches!(frame, Frame::Before { .. } | Frame::Within { .. }));
+            match resumed {
+                Some(Frame::Before { index: at, input }) => (index, current) = (at, input),
+                Some(Frame::Within { index: at }) => index = at,
+                _ => {}
+            }
             while let Some((name, task)) = items.get(index) {
                 if token.is_cancelled() {
                     return Err(Halt::Cancelled);
                 }
+                if self.continues_as_new() {
+                    self.suspend(Frame::Before {
+                        index,
+                        input: current,
+                    });
+                    return Err(Halt::ContinueAsNew);
+                }
                 let reference = format!("{path}/{index}/{name}");
-                let (output, flow) = self
+                let result = self
                     .run_task(name, task, &reference, current, token, variables)
-                    .await?;
+                    .await;
+                if result == Err(Halt::ContinueAsNew) {
+                    self.suspend(Frame::Within { index });
+                }
+                let (output, flow) = result?;
                 current = output;
                 match flow {
                     Flow::Continue => index += 1,
@@ -366,6 +475,17 @@ impl<'h, H: Host> Interpreter<'h, H> {
         token: &Token,
         variables: &[(String, Value)],
     ) -> Result<(Value, Flow), Halt> {
+        // A resumed task carries on where it stopped, without checking `if` or
+        // transforming its input again.
+        let (input, transformed, started_at) =
+            match self.resume_frame(|frame| matches!(frame, Frame::Task { .. })) {
+                Some(Frame::Task {
+                    input,
+                    transformed,
+                    started_at,
+                }) => (input, Some(transformed), Some(started_at)),
+                _ => (input, None, None),
+            };
         let mut scope = self.scope();
         scope.variables = variables.to_vec();
         scope.task = json!({
@@ -374,7 +494,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
             "definition": definition,
             "input": input,
         });
-        if let Some(condition) = definition.get("if") {
+        if let Some(condition) = definition.get("if").filter(|_| transformed.is_none()) {
             match expr::evaluate_field(condition, &input, &scope) {
                 Ok(value) if !expr::truthy(&value) => return Ok((input, Flow::Continue)),
                 Ok(_) => {}
@@ -387,15 +507,23 @@ impl<'h, H: Host> Interpreter<'h, H> {
             }
         }
         let record = self.host.task_started(reference, name);
-        scope.task["startedAt"] = date_time(self.host.now());
+        scope.task["startedAt"] = started_at.unwrap_or_else(|| date_time(self.host.now()));
+        let input = match transformed {
+            Some(transformed) => Input::Transformed(transformed),
+            None => Input::Raw(input),
+        };
         let result = self
             .execute(name, definition, reference, input, scope, token)
             .await;
-        let output = result
-            .as_ref()
-            .map(|(output, _)| output.clone())
-            .map_err(Clone::clone);
-        self.host.task_finished(record, &output);
+        // A task that continues as new carries on in the next run, which
+        // records how it ends.
+        if result != Err(Halt::ContinueAsNew) {
+            let output = result
+                .as_ref()
+                .map(|(output, _)| output.clone())
+                .map_err(Clone::clone);
+            self.host.task_finished(record, &output);
+        }
         result
     }
 
@@ -404,19 +532,24 @@ impl<'h, H: Host> Interpreter<'h, H> {
         name: &str,
         definition: &Value,
         reference: &str,
-        raw_input: Value,
+        input: Input,
         mut scope: Scope,
         token: &Token,
     ) -> Result<(Value, Flow), Halt> {
-        schema::check(definition, "input", &raw_input).map_err(|e| e.at(reference))?;
-        let input = match definition.pointer("/input/from") {
-            Some(from) => {
-                expr::evaluate_field(from, &raw_input, &scope).map_err(|e| e.at(reference))?
+        let input = match input {
+            Input::Transformed(input) => input,
+            Input::Raw(raw_input) => {
+                schema::check(definition, "input", &raw_input).map_err(|e| e.at(reference))?;
+                match definition.pointer("/input/from") {
+                    Some(from) => expr::evaluate_field(from, &raw_input, &scope)
+                        .map_err(|e| e.at(reference))?,
+                    None => raw_input,
+                }
             }
-            None => raw_input,
         };
         scope.input = input.clone();
         let after = timeout(definition, &input, &scope).map_err(|e| e.at(reference))?;
+        let _blocked = (!tasks::resumable(definition)).then(|| self.block());
         let (outcome, mut scope) = self
             .within(after, token, "task", |token| async move {
                 let task = Task {
@@ -459,5 +592,20 @@ impl<'h, H: Host> Interpreter<'h, H> {
                 .map_or(Flow::Continue, Flow::named)
         });
         Ok((output, flow))
+    }
+}
+
+/// A task's input: raw, or already transformed by a run that continued as new.
+enum Input {
+    Raw(Value),
+    Transformed(Value),
+}
+
+/// Unblocks continuing as new when dropped, as a task that blocked it ends.
+struct Blocked<'a>(&'a Cell<usize>);
+
+impl Drop for Blocked<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - 1);
     }
 }

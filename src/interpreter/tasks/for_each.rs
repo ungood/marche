@@ -7,6 +7,7 @@ use std::cell::{Cell, RefCell};
 use serde_json::Value;
 
 use crate::expr::{self, Scope};
+use crate::interpreter::resume::Frame;
 use crate::interpreter::{Done, Flow, Halt, Host, Interpreter, Outcome, Task, Token, join_all};
 use crate::ows;
 
@@ -14,15 +15,22 @@ pub async fn execute<H: Host>(
     interpreter: &Interpreter<'_, H>,
     task: &Task<'_>,
 ) -> Result<Outcome, Halt> {
-    let items = items(task)?;
+    // A resumed loop carries on in the iteration it stopped in, over the items
+    // it had, whatever `for.in` would give now.
+    let resumed = interpreter.resume_frame(|frame| matches!(frame, Frame::For { .. }));
+    let (items, start) = match resumed {
+        Some(Frame::For { items, iteration }) => (items, Some(iteration)),
+        _ => (items(task)?, None),
+    };
     if let Some(settings) = Parallel::of(task.definition) {
         return parallel(interpreter, task, &items, &settings).await;
     }
     let path = format!("{}/do", task.reference);
     let mut current = task.input.clone();
-    for (index, item) in items.iter().enumerate() {
+    for (index, item) in items.iter().enumerate().skip(start.unwrap_or(0)) {
         let scope = iteration_scope(task, item, index);
         if let Some(condition) = task.definition.get("while")
+            && start != Some(index)
             && !expr::truthy(&expr::evaluate_field(condition, &current, &scope)?)
         {
             break;
@@ -39,6 +47,14 @@ pub async fn execute<H: Host>(
             .await;
         // Leaving the iteration's scope cancels anything still running in it.
         token.cancel();
+        if let Err(Halt::ContinueAsNew) = done {
+            interpreter.suspend(Frame::For {
+                items: items.clone(),
+                iteration: index,
+            });
+            interpreter.suspend_task(task);
+            return Err(Halt::ContinueAsNew);
+        }
         let done = done?;
         current = done.output;
         if done.end {
@@ -98,6 +114,11 @@ impl Parallel {
                 .unwrap_or(true),
         })
     }
+}
+
+/// Whether a `for` task runs its iterations in parallel.
+pub fn is_parallel(definition: &Value) -> bool {
+    Parallel::of(definition).is_some()
 }
 
 /// What the lanes of a parallel loop share.
