@@ -167,5 +167,5 @@ Feature: Switch
     And the error says:
       """
       paint.yaml can't run on marche yet.
-      /do/0/checkColor/switch/0/red has then: paintRad, but the switch's list has no task named paintRad.
+      /do/0/checkColor/switch/0/red has then: paintRad, but its list has no task named paintRad.
       """

@@ -11,9 +11,9 @@ These files specify marche's own behavior: its CLI, cancellation, the parallel `
 
 ## Environment
 
-Each scenario runs in its own temporary directory, with `XDG_STATE_HOME` pointing inside it, so tests never touch the real state directory. Scenarios that execute a workflow share one `temporal server start-dev` and one `marche worker`, started on a free port the first time a scenario needs them and stopped when the run ends. `I run` points marche at that server with `TEMPORAL_ADDRESS`. The `temporal` CLI comes from mise.
+Each scenario runs in its own temporary directory, with `XDG_STATE_HOME` pointing inside it, so tests never touch the real state directory. Scenarios that execute a workflow share one `temporal server start-dev` and one `marche worker`, started on a free port the first time a scenario needs them and stopped when the run ends. `I run` points marche at that server with `TEMPORAL_ADDRESS`, removes any other `TEMPORAL_` variables, and sets `TEMPORAL_CONFIG_FILE` to a file in the scenario's directory, so the real Temporal configuration never applies. The `temporal` CLI comes from mise.
 
-A scenario that kills the worker gets a server and worker of its own, so it can't disturb the scenarios running beside it.
+A scenario that kills the worker, or starts one with flags of its own, gets a server and worker of its own, so it can't disturb the scenarios running beside it.
 
 ## Steps
 
@@ -21,6 +21,9 @@ Setup:
 
 - `the file "<path>":` with the content as a doc string, written in the scenario's directory.
 - `the workflow has written the file "<path>"` waits until a step of the running workflow creates the file in the scenario's directory.
+- `the environment variable "<name>" is "<value>"` sets a variable for `I run`, after the ones above.
+- `Temporal's configuration file says:` with TOML as a doc string, written to the file `TEMPORAL_CONFIG_FILE` names.
+- `a worker started with "marche worker <flags>"` starts the scenario's own server, and a worker with those flags.
 
 Action:
 
@@ -31,9 +34,11 @@ Action:
 
 Outcome:
 
-- `the command succeeds`, `the command fails`
-- `the output says:` with the expected text as a doc string. Each line must appear in standard output, after colors and the margin of wrapped lines are removed and whitespace is collapsed.
-- `the error says:` matches standard error the same way, and `marche prints:` matches both streams together.
+- `the command succeeds`, `the command fails`, `the command fails with exit code <n>`
+- `the output says:` with the expected text as a doc string. Each line must appear in standard output, after colors and miette's decoration are removed and whitespace is collapsed.
+- `the error says:` matches standard error the same way, `the help says:` matches the error's help, and `marche prints:` matches both streams together. `marche doesn't print:` checks that no line appears in either.
+- `the error points at line <n> of "<file>"` checks that one of the error's snippets shows that line.
+- `the worker prints:` matches what the scenario's own worker has printed.
 - `the JSON output contains:` with a JSON doc string. Standard output must be JSON with every field given.
 - `the process whose ID is in "<path>" has stopped` reads a process ID from a file in the scenario's directory and checks that the process has exited.
 - `<task> should have a standard output log of <n> bytes` checks the size of the log `marche show` gives for the task.

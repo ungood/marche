@@ -4,12 +4,13 @@ use std::time::Duration;
 use temporalio_sdk::{Runtime, Worker, WorkerOptions};
 use tokio::signal::unix::{SignalKind, signal};
 
+use crate::commands::Verbosity;
 use crate::error::Error;
 use crate::shell::{ShellActivities, state_dir};
 use crate::temporal::Target;
 use crate::workflow::{Interpret, TASK_QUEUE};
 
-pub async fn worker(target: &Target) -> Result<ExitCode, Error> {
+pub async fn worker(target: &Target, verbosity: Verbosity) -> Result<ExitCode, Error> {
     let temporal = target.connect().await?;
     temporal.register_search_attributes().await?;
     let runtime = Runtime::from_current_tokio(Default::default())
@@ -19,6 +20,7 @@ pub async fn worker(target: &Target) -> Result<ExitCode, Error> {
         .register_activities(ShellActivities {
             state_dir: state_dir(),
             marche,
+            verbose: verbosity == Verbosity::Verbose,
         })
         .register_workflow::<Interpret>()
         .map_err(|error| Error::Worker(error.to_string()))?

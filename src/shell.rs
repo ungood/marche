@@ -79,6 +79,8 @@ pub struct ShellActivities {
     pub state_dir: PathBuf,
     /// The marche binary, which runs each step under `marche guard`.
     pub marche: PathBuf,
+    /// Whether to print each step as it starts and finishes, for `marche worker -v`.
+    pub verbose: bool,
 }
 
 #[activities]
@@ -94,10 +96,28 @@ impl ShellActivities {
         let logs = self
             .state_dir
             .join("runs")
-            .join(run)
+            .join(&run)
             .join(request.reference.trim_start_matches('/'));
         let attempt = info.attempt;
-        run_step(&ctx, &self.marche, &request, &logs, attempt).await
+        let reference = &request.reference;
+        if self.verbose {
+            let attempt = match attempt {
+                0 | 1 => String::new(),
+                n => format!(" (attempt {n})"),
+            };
+            eprintln!("{run} started {reference}{attempt}: {}", request.command);
+        }
+        let result = run_step(&ctx, &self.marche, &request, &logs, attempt).await;
+        if self.verbose {
+            match &result {
+                Ok(result) => {
+                    eprintln!("{run} finished {reference} with exit code {}", result.code)
+                }
+                Err(ActivityError::Cancelled { .. }) => eprintln!("{run} cancelled {reference}"),
+                Err(_) => eprintln!("{run} couldn't start {reference}"),
+            }
+        }
+        result
     }
 }
 

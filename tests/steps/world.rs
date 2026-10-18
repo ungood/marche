@@ -25,6 +25,8 @@ pub struct MarcheWorld {
     pub services: Option<Services>,
     /// A `marche run --json` still in progress.
     pub pending: Option<Child>,
+    /// Environment variables from `the environment variable ... is ...`.
+    pub env: Vec<(String, String)>,
 }
 
 impl MarcheWorld {
@@ -42,12 +44,18 @@ impl MarcheWorld {
             show: None,
             services: None,
             pending: None,
+            env: Vec::new(),
         }
     }
 
     /// The directory commands run in.
     pub fn work_dir(&self) -> PathBuf {
         self.root.path().join("work")
+    }
+
+    /// Temporal's configuration file, so tests never read the real one.
+    pub fn temporal_config(&self) -> PathBuf {
+        self.root.path().join("temporal.toml")
     }
 
     /// Where marche keeps run logs, so tests never write to the real home directory.
@@ -83,12 +91,13 @@ pub fn marche() -> &'static Path {
 }
 
 /// Text with colors removed and runs of whitespace collapsed, for matching messages.
-/// miette's `│` margin is removed too, so a message it wraps still matches.
+/// miette's decoration, such as the bar it draws beside a wrapped message, is
+/// removed too.
 pub fn plain(bytes: &[u8]) -> String {
     let stripped = strip_ansi_escapes::strip(bytes);
     String::from_utf8_lossy(&stripped)
+        .replace(|c| "│×╭╰─┬┴├┤╮╯·▲⚠✖‽".contains(c), " ")
         .split_whitespace()
-        .filter(|word| *word != "│")
         .collect::<Vec<_>>()
         .join(" ")
 }

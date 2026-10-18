@@ -52,7 +52,7 @@ Because the definition travels in the workflow input, a run never reads the file
 
 ### Configuration
 
-marche connects to Temporal the way Temporal's own CLI does: `TEMPORAL_ADDRESS` (default `localhost:7233`), `TEMPORAL_NAMESPACE` (default `default`), and the profiles in Temporal's `temporal.toml`. The global flags `--address` and `--namespace` override them. marche's own files live under the XDG state directory, `~/.local/state/marche/`.
+marche connects to Temporal the way Temporal's own CLI does: `TEMPORAL_ADDRESS` (default `localhost:7233`), `TEMPORAL_NAMESPACE` (default `default`), and the profiles in Temporal's `temporal.toml`. The profile is `default` unless `--profile` or `TEMPORAL_PROFILE` names another, and the file is `temporalio/temporal.toml` in the user's config directory unless `--config-file` or `TEMPORAL_CONFIG_FILE` names another. The environment overrides the profile, and the global flags `--address` and `--namespace` override both. marche's own files live under the XDG state directory, `~/.local/state/marche/`.
 
 ### Temporal server
 
@@ -66,15 +66,17 @@ Run it as a user service (launchd on macOS, a systemd user unit on Linux). The d
 
 ## CLI
 
-Global flags: `--address <host:port>`, `--namespace <name>`, `-q/--quiet`, `-v/--verbose`. Every command that reports on runs takes `--json`.
+Global flags: `--address <host:port>`, `--namespace <name>`, `--profile <name>`, `--config-file <path>`, `-q/--quiet`, `-v/--verbose`. Every command that reports on runs takes `--json`. `-q` leaves only a command's result, and `-v` adds detail: each finished task's output or error in `marche run`'s progress, and each shell step in `marche worker`'s output.
 
-- **`marche run <file> [--input <json>] [-d/--detach]`:** starts a run. By default it waits, prints each task as it starts and finishes on standard error, and prints the workflow output on standard output. The exit code is 0 when the run completes and 1 when it faults or is cancelled. `--detach` prints the run ID and returns at once. `--json` prints `{"run", "status", "output"}` or `{"run", "status", "error"}`, where `status` is `completed`, `faulted` or `cancelled`.
+Exit codes are 0 for success, 1 when a run faults or is cancelled or a definition can't run, and 2 when marche can't do what it was asked: a usage error, `--input` that isn't JSON, a file it can't read, or a Temporal server it can't reach.
+
+- **`marche run <file> [--input <json>] [-d/--detach]`:** starts a run. By default it waits, prints each task as it starts and finishes on standard error (`started /do/0/greet`, `completed /do/0/greet`), and prints the workflow output on standard output: a string as plain text, anything else as JSON. `--detach` prints the run ID and returns at once. `--json` prints `{"run", "status", "output"}` or `{"run", "status", "error"}`, where `status` is `completed`, `faulted` or `cancelled`, and with `--detach`, `{"run", "status": "running"}`.
 - **`marche status [<run>]`:** shows a run's state and the tasks running now. Without an argument it shows the latest run started from the current directory.
 - **`marche list [--all]`:** lists recent runs started from the current directory, newest first. `--all` lists runs from every directory.
 - **`marche show <run>`:** shows the run's tasks in the order they started, with each task's reference, status, output or error, and the path of its log. `--json` prints `{"run", "status", "tasks": [{"reference", "name", "status", "output", "error", "log"}]}`. The conformance harness uses this to check task order.
 - **`marche cancel <run>`:** requests cancellation and waits until the run has stopped, so every process it started has exited.
-- **`marche validate <file>`:** runs the checks `marche run` runs, without starting anything. Errors point at the line in the file, as place's configuration errors do.
-- **`marche worker`:** runs the interpreter and the shell activity until interrupted.
+- **`marche validate <file>`:** runs the checks `marche run` runs, without connecting to Temporal or starting anything. It reports every problem at once, each with a snippet of the file pointing at its line, as place's configuration errors do.
+- **`marche worker`:** runs the interpreter and the shell activity until interrupted. With `-v`, it prints each shell step as it starts and finishes, after its run's ID.
 
 `marche show` and `marche status` read task details through a workflow query, so a worker must be running to answer them. That's the normal state on a machine that runs workflows.
 

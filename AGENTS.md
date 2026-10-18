@@ -24,7 +24,7 @@ Skills live in `.agents/skills/`. `.claude/skills` is a symlink to that director
 - `src/main.rs`: the CLI arguments and dispatch. Each command is in `src/commands/`.
 - `src/error.rs`: every error marche prints. Their wording is spec, so keep it in step with `features/`.
 - `src/interpreter/`: the deterministic OWS interpreter, written against the `Host` trait. `mod.rs` walks task lists and applies data flow, each task type is a module in `tasks/`, and `tests.rs` drives it with a fake host. Scopes are cancellation tokens: a task that opens a scope runs its children under a `child_token()` and cancels it on leaving. `src/workflow.rs` is the Temporal workflow `marche.interpret` that implements `Host`, and `src/shell.rs` is the `marche.shell` activity.
-- `src/expr.rs`: jq expressions through jaq, without its impure builtins. `src/definition.rs`: loading a definition and the checks `marche run` makes.
+- `src/expr.rs`: jq expressions through jaq, without its impure builtins. `src/definition.rs`: loading a definition and the checks `marche run` and `marche validate` make, each reported at a JSON pointer that `src/spans.rs` maps to its place in the file.
 
 ## Conventions
 

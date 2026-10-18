@@ -7,8 +7,8 @@ use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::world::marche;
@@ -22,6 +22,10 @@ const READY: &str = "marche worker is running";
 pub struct Services {
     pub address: String,
     pub state: PathBuf,
+    /// Everything the worker has printed on standard error.
+    pub log: Arc<Mutex<String>>,
+    /// Arguments after `marche worker --address <address>`.
+    args: Vec<String>,
     server: Child,
     worker: Child,
 }
@@ -44,6 +48,11 @@ pub fn stop() {
 
 impl Services {
     pub fn start() -> Self {
+        Self::start_with(Vec::new())
+    }
+
+    /// Starts a server, and a worker with extra arguments, such as `-v`.
+    pub fn start_with(args: Vec<String>) -> Self {
         let port = free_port();
         let address = format!("127.0.0.1:{port}");
         let server = Command::new("temporal")
@@ -56,10 +65,13 @@ impl Services {
         wait_for(&address);
         let state = std::env::temp_dir().join(format!("marche-test-{port}"));
         std::fs::create_dir_all(&state).expect("create worker state dir");
-        let worker = start_worker(&address, &state);
+        let log = Arc::default();
+        let worker = start_worker(&address, &state, &args, &log);
         Self {
             address,
             state,
+            log,
+            args,
             server,
             worker,
         }
@@ -69,7 +81,7 @@ impl Services {
     pub fn restart_worker(&mut self) {
         let _ = self.worker.kill();
         let _ = self.worker.wait();
-        self.worker = start_worker(&self.address, &self.state);
+        self.worker = start_worker(&self.address, &self.state, &self.args, &self.log);
     }
 }
 
@@ -83,21 +95,32 @@ impl Drop for Services {
     }
 }
 
-/// Starts `marche worker` and waits until it's ready, passing its output on.
-fn start_worker(address: &str, state: &PathBuf) -> Child {
+/// Starts `marche worker` and waits until it's ready, passing its output on
+/// and keeping it in `log`.
+fn start_worker(
+    address: &str,
+    state: &PathBuf,
+    args: &[String],
+    log: &Arc<Mutex<String>>,
+) -> Child {
     let mut worker = Command::new(marche())
         .args(["worker", "--address", address])
+        .args(args)
         .env("XDG_STATE_HOME", state)
         .stderr(Stdio::piped())
         .spawn()
         .expect("start marche worker");
     let stderr = worker.stderr.take().expect("worker stderr");
     let (ready, started) = mpsc::channel();
+    let log = Arc::clone(log);
     std::thread::spawn(move || {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
             if line.contains(READY) {
                 let _ = ready.send(());
             }
+            let mut log = log.lock().expect("worker log lock");
+            log.push_str(&line);
+            log.push('\n');
             eprintln!("{line}");
         }
     });
