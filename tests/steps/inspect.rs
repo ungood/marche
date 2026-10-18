@@ -98,7 +98,11 @@ async fn has_run(world: &mut MarcheWorld, path: String) {
         .as_str()
         .expect("marche run --json has a run ID")
         .to_string();
-    let query = format!("WorkflowId = '{id}' AND ExecutionStatus != 'Running'");
+    // A run that continued as new ended only when the last run in its chain did.
+    let query = format!(
+        "WorkflowId = '{id}' AND ExecutionStatus != 'Running' \
+         AND ExecutionStatus != 'ContinuedAsNew'"
+    );
     wait_listed(&world.address().await, &query).await;
     world.run_id = Some(id);
 }

@@ -466,3 +466,73 @@ Feature: marche run
       """
       `temporal config list` shows the profiles in temporal.toml.
       """
+
+  Scenario: TEMPORAL_PROFILE picks a profile in Temporal's configuration file
+    Given the file "hello.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: hello
+        version: '0.1.0'
+      do:
+        - greet:
+            set:
+              name: world
+      """
+    And Temporal's configuration file says:
+      """toml
+      [profile.pastry]
+      namespace = "pastry"
+      """
+    And the environment variable "TEMPORAL_PROFILE" is "pastry"
+    When I run "marche run hello.yaml"
+    Then the command fails with exit code 2
+    And the error says:
+      """
+      Temporal has no namespace pastry.
+      """
+
+  Scenario: --config-file picks Temporal's configuration file
+    Given the file "hello.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: hello
+        version: '0.1.0'
+      do:
+        - greet:
+            set:
+              name: world
+      """
+    And the file "kitchen.toml":
+      """toml
+      [profile.default]
+      namespace = "kitchen"
+      """
+    When I run "marche run hello.yaml --config-file kitchen.toml"
+    Then the command fails with exit code 2
+    And the error says:
+      """
+      Temporal has no namespace kitchen.
+      """
+
+  Scenario: A run that's cancelled fails
+    Given a workflow with definition:
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: nap
+        version: '0.1.0'
+      do:
+        - nap:
+            run:
+              shell:
+                command: sleep 600
+      """
+    And the workflow is running its nap task
+    When the workflow is cancelled
+    Then the command fails with exit code 1
+    And the workflow should cancel

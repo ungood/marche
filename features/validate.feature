@@ -388,3 +388,53 @@ Feature: marche validate
       """
       Couldn't read missing.yaml: No such file or directory (os error 2).
       """
+
+  Scenario Outline: run: <process> isn't supported yet
+    Given the file "build.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: build
+        version: '0.1.0'
+      do:
+        - build:
+            run:
+              <process>: <settings>
+      """
+    When I run "marche validate build.yaml"
+    Then the command fails with exit code 1
+    And the error says:
+      """
+      /do/0/build is a run: <process> task, which marche doesn't support yet.
+      """
+    And the error points at line 9 of "build.yaml"
+
+    Examples:
+      | process   | settings                                                |
+      | script    | { language: js, code: 'console.log(1)' }                |
+      | container | { image: alpine }                                       |
+      | workflow  | { namespace: examples, name: bake, version: '0.1.0' }   |
+
+  Scenario: A step that doesn't wait for its process is rejected
+    Given the file "detach.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: detach
+        version: '0.1.0'
+      do:
+        - serve:
+            run:
+              shell:
+                command: sleep 60
+              await: false
+      """
+    When I run "marche validate detach.yaml"
+    Then the command fails with exit code 1
+    And the error says:
+      """
+      /do/0/serve uses await: false, which marche doesn't support, because the process would outlive the run.
+      """
+    And the error points at line 11 of "detach.yaml"
