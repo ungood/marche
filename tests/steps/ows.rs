@@ -144,6 +144,48 @@ fn restart_worker(world: &mut MarcheWorld) {
         .as_mut()
         .expect("the workflow isn't running")
         .restart_worker();
+    finish_pending(world);
+}
+
+#[when("the workflow is cancelled")]
+fn cancel(world: &mut MarcheWorld) {
+    let address = world
+        .services
+        .as_ref()
+        .expect("the workflow isn't running")
+        .address
+        .clone();
+    // The scenario's own server runs only this workflow, though visibility can
+    // take a moment to list it.
+    let id = (0..50)
+        .find_map(|_| {
+            let output = Command::new("temporal")
+                .args(["workflow", "list", "--address", &address, "-o", "json"])
+                .args(["--query", "ExecutionStatus='Running'"])
+                .output()
+                .expect("run temporal workflow list");
+            let runs: Value = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
+            let id = runs[0]["execution"]["workflowId"]
+                .as_str()
+                .map(String::from);
+            if id.is_none() {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            id
+        })
+        .expect("the workflow isn't listed as running");
+    let status = Command::new("temporal")
+        .args(["workflow", "cancel", "--address", &address])
+        .args(["--workflow-id", &id])
+        .stdout(Stdio::null())
+        .status()
+        .expect("run temporal workflow cancel");
+    assert!(status.success(), "temporal workflow cancel failed");
+    finish_pending(world);
+}
+
+/// Waits for the run started by `the workflow is running its <task> task`.
+fn finish_pending(world: &mut MarcheWorld) {
     let output = world
         .pending
         .take()

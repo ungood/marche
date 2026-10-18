@@ -24,6 +24,7 @@ Setup:
 Action:
 
 - `I run "<command>"` runs marche in the scenario's directory. The command is split into words as a shell would, so `--input '{"name": "Ada"}'` is one argument.
+- `the workflow is cancelled` cancels the run started by `the workflow is running its <task> task` with `temporal workflow cancel`, and waits for it to stop.
 - `the worker is killed and started again` kills the scenario's own worker with SIGKILL, starts a new one, and waits for the run started by `the workflow is running its <task> task`.
 
 Outcome:
