@@ -19,7 +19,7 @@ static SCHEMA: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
 });
 
 /// Task types the interpreter runs. `run` is checked by process.
-const SUPPORTED_TASKS: &[&str] = &["do", "set", "run"];
+const SUPPORTED_TASKS: &[&str] = &["do", "set", "run", "switch", "raise"];
 /// `do` comes last, because `for` tasks have a `do` too.
 const TASK_TYPES: &[&str] = &[
     "call", "emit", "for", "fork", "listen", "raise", "run", "set", "switch", "try", "wait", "do",
@@ -183,6 +183,24 @@ fn check_list(list: &Value, path: &str, problems: &mut Vec<String>) {
                 "{reference} has then: {target}, but its list has no task named {target}."
             ));
         }
+        if let Some(name) = task.pointer("/raise/error").and_then(Value::as_str) {
+            problems.push(format!(
+                "{reference} raises {name} from use.errors, which marche doesn't support yet."
+            ));
+        }
+        let cases = task["switch"].as_array().into_iter().flatten().enumerate();
+        for (case_index, (case, body)) in
+            cases.filter_map(|(index, item)| Some((index, item.as_object()?.iter().next()?)))
+        {
+            if let Some(then) = body["then"].as_str()
+                && !["continue", "exit", "end"].contains(&then)
+                && !tasks.iter().any(|(name, _)| *name == then)
+            {
+                problems.push(format!(
+                    "{reference}/switch/{case_index}/{case} has then: {then}, but the switch's list has no task named {then}."
+                ));
+            }
+        }
         if kind == "do" {
             check_list(&task["do"], &format!("{reference}/do"), problems);
         }
@@ -219,9 +237,37 @@ mod tests {
     }
 
     #[test]
+    fn reports_switch_cases_that_jump_outside_their_list() {
+        let definition = json!({
+            "do": [
+                {"check": {"switch": [
+                    {"red": {"when": ".red", "then": "paint"}},
+                    {"blue": {"when": ".blue", "then": "nowhere"}},
+                    {"other": {"then": "exit"}},
+                ]}},
+                {"paint": {"set": {}}},
+            ]
+        });
+        assert_eq!(
+            unsupported(&definition),
+            [
+                "/do/0/check/switch/1/blue has then: nowhere, but the switch's list has no task named nowhere."
+            ]
+        );
+    }
+
+    #[test]
     fn the_examples_hello_is_supported() {
         let hello: Value = serde_yaml_ng::from_str(include_str!("../examples/hello.yaml")).unwrap();
         assert!(SCHEMA.is_valid(&hello));
         assert_eq!(unsupported(&hello), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_examples_review_loop_is_supported() {
+        let review: Value =
+            serde_yaml_ng::from_str(include_str!("../examples/review-loop.yaml")).unwrap();
+        assert!(SCHEMA.is_valid(&review));
+        assert_eq!(unsupported(&review), Vec::<String>::new());
     }
 }

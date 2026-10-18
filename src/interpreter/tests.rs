@@ -243,3 +243,242 @@ fn cancelling_a_parent_cancels_its_children() {
     parent.cancel();
     assert!(child.is_cancelled());
 }
+
+const COLORS: &str = r#"
+do:
+  - switchColor:
+      switch:
+        - red:
+            when: .color == "red"
+            then: setRed
+        - warm:
+            when: .color == "red" or .color == "orange"
+            then: setWarm
+        - other:
+            when: .color == "green"
+            then: exit
+      then: setNone
+  - setRed:
+      set:
+        paint: red
+      then: end
+  - setWarm:
+      set:
+        paint: warm
+      then: end
+  - setNone:
+      set:
+        paint: none
+"#;
+
+#[test]
+fn switch_follows_the_first_matching_case() {
+    let host = FakeHost::default();
+    let output = run(&host, COLORS, json!({"color": "red"}));
+    assert_eq!(output, Ok(json!({"paint": "red"})));
+    let output = run(&host, COLORS, json!({"color": "orange"}));
+    assert_eq!(output, Ok(json!({"paint": "warm"})));
+}
+
+#[test]
+fn switch_case_flow_directives_apply() {
+    let host = FakeHost::default();
+    let output = run(&host, COLORS, json!({"color": "green"}));
+    assert_eq!(output, Ok(json!({"color": "green"})));
+}
+
+#[test]
+fn switch_follows_its_own_then_when_no_case_matches() {
+    let host = FakeHost::default();
+    let output = run(&host, COLORS, json!({"color": "blue"}));
+    assert_eq!(output, Ok(json!({"paint": "none"})));
+    assert_eq!(
+        *host.events.borrow(),
+        [
+            "started /do/0/switchColor",
+            "completed /do/0/switchColor",
+            "started /do/3/setNone",
+            "completed /do/3/setNone"
+        ]
+    );
+}
+
+#[test]
+fn a_switch_case_without_when_is_the_default() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - pick:
+      switch:
+        - never:
+            when: "false"
+            then: end
+        - fallback:
+            then: chosen
+  - skipped:
+      set:
+        chosen: false
+  - chosen:
+      set:
+        chosen: true
+"#,
+        json!({}),
+    );
+    assert_eq!(output, Ok(json!({"chosen": true})));
+}
+
+#[test]
+fn a_failing_switch_case_faults_the_switch() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - pick:
+      switch:
+        - broken:
+            when: .color | ascii_downcase
+            then: end
+"#,
+        json!({"color": 7}),
+    );
+    let Err(Halt::Fault(error)) = output else {
+        panic!("expected a fault: {output:?}")
+    };
+    assert_eq!(error.status, 400);
+    assert_eq!(error.instance.as_deref(), Some("/do/0/pick"));
+}
+
+#[test]
+fn raise_faults_with_its_error_at_its_reference() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - refuse:
+      raise:
+        error:
+          type: ${ "https://example.com/errors/" + .reason }
+          status: 409
+          title: ${ "No " + .dish }
+          detail: The kitchen ran out.
+  - never:
+      set: {}
+"#,
+        json!({"dish": "soup", "reason": "sold-out"}),
+    );
+    assert_eq!(
+        output,
+        Err(Halt::Fault(ows::Error {
+            kind: "https://example.com/errors/sold-out".into(),
+            status: 409,
+            title: Some("No soup".into()),
+            detail: Some("The kitchen ran out.".into()),
+            instance: Some("/do/0/refuse".into()),
+        }))
+    );
+    assert_eq!(
+        *host.events.borrow(),
+        ["started /do/0/refuse", "faulted /do/0/refuse"]
+    );
+}
+
+#[test]
+fn raise_keeps_an_instance_it_gives() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - refuse:
+      raise:
+        error:
+          type: https://example.com/errors/sold-out
+          status: 409
+          instance: ${ "/kitchen/" + .dish }
+"#,
+        json!({"dish": "soup"}),
+    );
+    let Err(Halt::Fault(error)) = output else {
+        panic!("expected a fault: {output:?}")
+    };
+    assert_eq!(error.instance.as_deref(), Some("/kitchen/soup"));
+    assert_eq!(error.title, None);
+}
+
+#[test]
+fn raise_fields_must_be_strings() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - refuse:
+      raise:
+        error:
+          type: https://example.com/errors/sold-out
+          status: 409
+          title: ${ .count }
+"#,
+        json!({"count": 3}),
+    );
+    let Err(Halt::Fault(error)) = output else {
+        panic!("expected a fault: {output:?}")
+    };
+    assert_eq!(error.status, 400);
+    assert_eq!(
+        error.detail.as_deref(),
+        Some("The error's title must be a string, but it's 3.")
+    );
+}
+
+#[test]
+fn review_loop_gives_up_after_three_attempts() {
+    let host = FakeHost::default();
+    for code in [1, 0, 1, 0, 1] {
+        host.results.borrow_mut().push(exited(code, "", ""));
+    }
+    let output = run(
+        &host,
+        include_str!("../../examples/review-loop.yaml"),
+        json!({}),
+    );
+    let Err(Halt::Fault(error)) = output else {
+        panic!("expected a fault: {output:?}")
+    };
+    assert_eq!(error.status, 422);
+    assert_eq!(error.instance.as_deref(), Some("/do/4/giveUp"));
+    let commands: Vec<String> = host
+        .requests
+        .borrow()
+        .iter()
+        .map(|request| request.command.clone())
+        .collect();
+    assert_eq!(
+        commands,
+        [
+            "./review.sh",
+            "./fix.sh",
+            "./review.sh",
+            "./fix.sh",
+            "./review.sh"
+        ]
+    );
+}
+
+#[test]
+fn review_loop_ends_when_the_review_passes() {
+    let host = FakeHost::default();
+    for code in [1, 0, 0] {
+        host.results.borrow_mut().push(exited(code, "", ""));
+    }
+    let output = run(
+        &host,
+        include_str!("../../examples/review-loop.yaml"),
+        json!({}),
+    );
+    assert_eq!(output, Ok(json!({"attempt": 2, "passed": true})));
+}
