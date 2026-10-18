@@ -540,7 +540,6 @@ Feature: marche run
     Then the command fails with exit code 1
     And the workflow should cancel
 
-  @wip
   Scenario: A run says when no worker is serving its task queue
     Given a Temporal server with no worker
     And the file "hello.yaml":

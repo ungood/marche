@@ -13,10 +13,13 @@ use crate::commands::{Verbosity, show};
 use crate::definition;
 use crate::error::Error;
 use crate::ows::{self, Status, TaskRecord};
+use crate::runs;
 use crate::temporal::{DEFINITION, DEFINITION_HASH, DIRECTORY, Target};
 use crate::workflow::{Interpret, RunInput, TASK_QUEUE};
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+/// How often a waiting run checks that a worker is serving its task queue.
+const WORKER_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
@@ -94,9 +97,22 @@ pub async fn run(args: Args, target: &Target, verbosity: Verbosity) -> Result<Ex
     let result = {
         let result = handle.get_result(WorkflowGetResultOptions::default());
         tokio::pin!(result);
+        let mut worker_check = tokio::time::interval(WORKER_CHECK_INTERVAL);
+        // Whether the last check found a worker, so the hint is printed once
+        // each time the worker goes missing.
+        let mut served = true;
         loop {
             tokio::select! {
                 result = &mut result => break result,
+                _ = worker_check.tick(), if !quiet => {
+                    let now = runs::worker_serves(&temporal, TASK_QUEUE).await.unwrap_or(true);
+                    if served && !now {
+                        eprintln!(
+                            "No worker is serving the task queue {TASK_QUEUE}, so the run is waiting for one. Start one with `marche worker`."
+                        );
+                    }
+                    served = now;
+                }
                 () = tokio::time::sleep(PROGRESS_INTERVAL) => {
                     if !quiet {
                         progress.print(&tasks, &id).await;

@@ -196,7 +196,6 @@ Feature: marche status
       {"run": "$RUN", "definition": "examples.courses:0.1.0", "status": "completed", "running": []}
       """
 
-  @wip
   Scenario: Status fails at once when the run's worker has stopped
     Given a worker started with "marche worker"
     And the file "nap.yaml":

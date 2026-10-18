@@ -113,7 +113,6 @@ Feature: marche cancel
       $RUN had already been cancelled.
       """
 
-  @wip
   Scenario: Without a worker, cancel returns once the cancellation is requested
     Given the run "tools.four-01JAB3K4Z7Y8X9W0V1T2S3R4QA" has started on a task queue no worker serves
     When I run "marche cancel tools.four-01JAB3K4Z7Y8X9W0V1T2S3R4QA"
@@ -123,7 +122,6 @@ Feature: marche cancel
       Cancellation of tools.four-01JAB3K4Z7Y8X9W0V1T2S3R4QA is requested. No worker is serving the task queue elsewhere, so the run will stop once one picks it up.
       """
 
-  @wip
   Scenario: Without a worker, --json says the run is still running
     Given the run "tools.five-01JAB3K4Z7Y8X9W0V1T2S3R4QB" has started on a task queue no worker serves
     When I run "marche cancel tools.five-01JAB3K4Z7Y8X9W0V1T2S3R4QB --json"
