@@ -1,5 +1,6 @@
 //! Interpreter tests against a fake host.
 
+mod context;
 mod continue_as_new;
 mod for_each;
 mod try_catch;

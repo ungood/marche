@@ -110,6 +110,8 @@ Top-level features outside M1 are `use`, `schedule` and `evaluate.language` valu
 
 Data flows as the spec describes: `input.from`, `input.schema`, `output.as`, `output.schema` and `export.as` at both the workflow and task level, and `if` on every task. Expressions are jq, evaluated by jaq in `strict` mode, so in values such as `set`, shell arguments and `environment`, only `${ }` strings are expressions. Fields whose whole value is an expression (`if`, `input.from`, `output.as` and `export.as`) also accept jq without the `${ }`, as the conformance kit writes them.
 
+A task's `output.as` and `export.as`, a `for` task's `while`, and `catch`'s and its retry policy's `when` and `exceptWhen` see `$context` as the tasks inside them left it. `export` without `as` leaves the context as it is and checks it against `export.schema`.
+
 In a `fork`, a branch's `export.as` replaces `$context` when that branch finishes, so tasks still running in other branches see it from then on, and when several branches export, the last to finish wins. That order replays identically but depends on timing, so a definition that needs every branch's result should read the fork's output instead.
 
 Expressions see the spec's arguments: `$context`, `$input`, `$output`, `$workflow`, `$runtime` and `$task`, plus the `for` and `catch` variables. jaq's impure builtins are removed: `now`, `env`, `$ENV`, `input`, `inputs`, `debug`, `stderr`, `halt`, `halt_error`, and `localtime` and `strflocaltime`, which read the machine's time zone. An expression that uses one faults with an `expression` error that says why. Values that depend on the outside world come from arguments recorded once:

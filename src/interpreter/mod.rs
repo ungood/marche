@@ -233,6 +233,13 @@ impl<'h, H: Host> Interpreter<'h, H> {
         }
     }
 
+    /// The current `$context`. A scope taken before a task ran holds the
+    /// context from then, so code that evaluates after tasks inside it have
+    /// exported refreshes its scope's context from here.
+    pub fn context(&self) -> Value {
+        self.context.borrow().clone()
+    }
+
     /// Replaces `$context`, as `export.as` does.
     pub fn set_context(&self, context: Value) {
         *self.context.borrow_mut() = context;
@@ -594,6 +601,8 @@ impl<'h, H: Host> Interpreter<'h, H> {
             .await
             .map_err(|halt| halt.at(reference))?;
 
+        // The tasks inside this one may have exported since its scope was taken.
+        scope.context = self.context();
         scope.task["output"] = outcome.output.clone();
         let output = match definition.pointer("/output/as") {
             Some(output) => expr::evaluate_field(output, &outcome.output, &scope)
@@ -602,6 +611,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
         };
         schema::check(definition, "output", &output).map_err(|e| e.at(reference))?;
         if let Some(export) = definition.get("export") {
+            // Without `as`, the context stays as it is, and is only checked.
             let context = match export.get("as") {
                 Some(export) => {
                     scope.output = output.clone();
@@ -610,7 +620,9 @@ impl<'h, H: Host> Interpreter<'h, H> {
                 None => scope.context.clone(),
             };
             schema::check(definition, "export", &context).map_err(|e| e.at(reference))?;
-            self.set_context(context);
+            if export.get("as").is_some() {
+                self.set_context(context);
+            }
         }
 
         let flow = outcome.flow.unwrap_or_else(|| {

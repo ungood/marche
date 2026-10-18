@@ -48,6 +48,8 @@ pub async fn execute<H: Host>(
             Err(Halt::Fault(error)) => error,
         };
         let mut scope = task.scope.clone();
+        // The tasks that ran may have exported.
+        scope.context = interpreter.context();
         scope.bind(
             name,
             serde_json::to_value(&error).expect("errors serialize"),
