@@ -327,6 +327,6 @@ do:
     assert_eq!(output, Err(Halt::Cancelled));
     assert_eq!(
         *host.events.borrow(),
-        ["started /do/0/poll", "faulted /do/0/poll"]
+        ["started /do/0/poll", "cancelled /do/0/poll"]
     );
 }

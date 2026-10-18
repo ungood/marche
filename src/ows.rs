@@ -40,6 +40,14 @@ impl Error {
         Self::standard("expression", 400, "Expression failed", detail)
     }
 
+    pub fn validation(detail: impl Into<String>) -> Self {
+        Self::standard("validation", 400, "Validation failed", detail)
+    }
+
+    pub fn timeout(detail: impl Into<String>) -> Self {
+        Self::standard("timeout", 408, "Timed out", detail)
+    }
+
     /// Sets the instance, unless a nested task already set it.
     pub fn at(mut self, reference: &str) -> Self {
         self.instance.get_or_insert_with(|| reference.to_string());

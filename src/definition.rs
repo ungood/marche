@@ -8,6 +8,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::error::Error;
+use crate::interpreter::schema::{self, Unusable};
 
 /// The most schema errors to report at once.
 const MAX_ERRORS: usize = 10;
@@ -27,19 +28,8 @@ const TASK_TYPES: &[&str] = &[
 
 /// Settings the schema allows and the interpreter doesn't implement yet, as
 /// JSON pointers relative to the workflow or a task.
-const UNSUPPORTED_WORKFLOW: &[&str] = &[
-    "/use",
-    "/schedule",
-    "/timeout",
-    "/input/schema",
-    "/output/schema",
-];
-const UNSUPPORTED_TASK: &[&str] = &[
-    "/timeout",
-    "/input/schema",
-    "/output/schema",
-    "/export/schema",
-];
+const UNSUPPORTED_WORKFLOW: &[&str] = &["/use", "/schedule"];
+const UNSUPPORTED_TASK: &[&str] = &[];
 
 #[derive(Debug, Clone)]
 pub struct Definition {
@@ -115,6 +105,7 @@ fn unsupported(definition: &Value) -> Vec<String> {
             ));
         }
     }
+    check_data(definition, "The workflow", &mut problems);
     let evaluate = &definition["evaluate"];
     if evaluate["language"]
         .as_str()
@@ -162,6 +153,7 @@ fn check_list(list: &Value, path: &str, problems: &mut Vec<String>) {
                 ));
             }
         }
+        check_data(task, &reference, problems);
         if let Some(run) = task["run"].as_object() {
             if let Some(process) = ["container", "script", "workflow"]
                 .iter()
@@ -236,6 +228,35 @@ fn check_try(task: &Value, reference: &str, problems: &mut Vec<String>) {
     );
 }
 
+/// The schemas and timeout of the workflow or a task, which `who` names.
+fn check_data(owner: &Value, who: &str, problems: &mut Vec<String>) {
+    for field in ["input", "output", "export"] {
+        let Some(schema) = owner.get(field).and_then(|field| field.get("schema")) else {
+            continue;
+        };
+        problems.push(match schema::compile(schema) {
+            Ok(_) => continue,
+            Err(Unusable::External) => {
+                format!("{who} uses an external {field}.schema, which marche doesn't support yet.")
+            }
+            Err(Unusable::Format(format)) => format!(
+                "{who} uses an {field}.schema in the {format} format, which marche doesn't support yet."
+            ),
+            Err(Unusable::Remote(uri)) => format!(
+                "{who} uses an {field}.schema that refers to {uri}, which marche doesn't fetch, because a run must replay the same way every time."
+            ),
+            Err(Unusable::Invalid(message)) => format!(
+                "{who} uses an {field}.schema that isn't a valid JSON Schema: {message}."
+            ),
+        });
+    }
+    if let Some(name) = owner["timeout"].as_str() {
+        problems.push(format!(
+            "{who} uses the named timeout {name}, which marche doesn't support yet."
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -245,10 +266,10 @@ mod tests {
     #[test]
     fn reports_unsupported_tasks_and_settings() {
         let definition = json!({
-            "timeout": {"after": {"minutes": 1}},
+            "timeout": "short",
             "do": [
                 {"ready": {"listen": {"to": {"one": {"with": {"type": "ready"}}}}}},
-                {"outer": {"do": [{"inner": {"set": {}, "timeout": {"after": {"seconds": 1}}}}]}},
+                {"outer": {"do": [{"inner": {"set": {}, "input": {"schema": {"resource": {"endpoint": "https://example.com/order.json"}}}}}]}},
                 {"jump": {"set": {}, "then": "nowhere"}},
                 {"loop": {"for": {"in": ".items"}, "do": []}},
             ]
@@ -256,9 +277,9 @@ mod tests {
         assert_eq!(
             unsupported(&definition),
             [
-                "The workflow uses /timeout, which marche doesn't support yet.",
+                "The workflow uses the named timeout short, which marche doesn't support yet.",
                 "/do/0/ready is a listen task, which marche doesn't support yet.",
-                "/do/1/outer/do/0/inner uses timeout, which marche doesn't support yet.",
+                "/do/1/outer/do/0/inner uses an external input.schema, which marche doesn't support yet.",
                 "/do/2/jump has then: nowhere, but its list has no task named nowhere.",
                 "/do/3/loop is a for task, which marche doesn't support yet.",
             ]
@@ -281,6 +302,31 @@ mod tests {
             unsupported(&definition),
             [
                 "/do/0/check/switch/1/blue has then: nowhere, but the switch's list has no task named nowhere."
+            ]
+        );
+    }
+
+    #[test]
+    fn checks_schemas_and_timeouts() {
+        let definition = json!({
+            "timeout": {"after": {"minutes": 1}},
+            "input": {"schema": {"document": {"type": "object"}}},
+            "output": {"schema": {"format": "avro", "document": {}}},
+            "do": [
+                {"cook": {
+                    "set": {},
+                    "timeout": {"after": "${ .after }"},
+                    "input": {"schema": {"document": {"type": 5}}},
+                    "export": {"schema": {"document": {"$ref": "file:///etc/context.json"}}},
+                }},
+            ]
+        });
+        assert_eq!(
+            unsupported(&definition),
+            [
+                "The workflow uses an output.schema in the avro format, which marche doesn't support yet.",
+                "/do/0/cook uses an input.schema that isn't a valid JSON Schema: 5 is not valid under any of the schemas listed in the 'anyOf' keyword at /type.",
+                "/do/0/cook uses an export.schema that refers to file:///etc/context.json, which marche doesn't fetch, because a run must replay the same way every time.",
             ]
         );
     }
@@ -328,7 +374,6 @@ mod tests {
                 "/do/1/timed has catch.then: nowhere, but its list has no task named nowhere.",
                 "/do/1/timed uses catch.retry.limit.attempt.duration, which marche doesn't support yet.",
                 "/do/1/timed/try/0/ready is a listen task, which marche doesn't support yet.",
-                "/do/1/timed/catch/do/0/inner uses timeout, which marche doesn't support yet.",
             ]
         );
     }

@@ -113,6 +113,8 @@ Expressions see the spec's arguments: `$context`, `$input`, `$output`, `$workflo
 
 jaq differs from jq in a few documented corners, such as number precision and some error messages. The conformance kit is the check that the differences don't matter to OWS definitions.
 
+Schemas are checked where the spec's data flow puts them: input against `input.schema` before `input.from`, output against `output.schema` after `output.as`, and the context against `export.schema` after `export.as`. marche supports schemas written inline as `document` in the `json` format, which is JSON Schema. Validation runs in workflow code, so marche compiles schemas offline and never fetches one: `marche run` rejects a schema given as an external `resource`, or one with a `$ref` outside its document. A `validation` error lists every mismatch, sorted, so its detail is the same on every replay.
+
 ### Errors
 
 Errors are OWS error objects with `type`, `status`, `title`, `detail` and `instance`. marche raises the spec's standard types:
@@ -121,6 +123,8 @@ Errors are OWS error objects with `type`, `status`, `title`, `detail` and `insta
 - An expression that fails raises `expression` (400).
 - Input or output that fails its schema raises `validation` (400).
 - A task or workflow `timeout` raises `timeout` (408).
+
+A timeout is a Temporal timer that races the task, which runs under a scope of its own. If the timer fires first, marche cancels the task's scope, waits until everything in it has stopped, and then faults with the `timeout` error. A task that finishes in the same workflow activation as the timer fires completes, because the race checks the task first. A workflow timeout's `instance` is `/`. `timeout.after` is an inline duration or an expression, evaluated on the transformed input. A timeout named in `use.timeouts` isn't supported in M1.
 
 `try` can catch all of these. Retry policies on `catch.retry` run in the interpreter, so a retry reruns the whole `try` block, however many tasks it holds. Delays, backoff, jitter and limits are Temporal timers and replay deterministically, with jitter drawn from Temporal's seeded random source.
 
