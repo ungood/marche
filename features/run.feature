@@ -160,7 +160,6 @@ Feature: marche run
       examples.nap-
       """
 
-  @wip
   Scenario: A task type marche doesn't support yet is rejected before the run starts
     Given the file "fetch.yaml":
       """yaml

@@ -9,7 +9,6 @@ Feature: marche validate
   its line in the file. It exits with 0 when the definition can run, 1 when it
   can't, and 2 when marche can't read the file.
 
-  @wip
   Scenario: A definition marche can run is valid
     Given the file "hello.yaml":
       """yaml
@@ -30,7 +29,6 @@ Feature: marche validate
       hello.yaml is valid, and marche can run it.
       """
 
-  @wip
   Scenario: Validating doesn't need a Temporal server
     Given the file "hello.json":
       """json
@@ -46,7 +44,6 @@ Feature: marche validate
       hello.json is valid, and marche can run it.
       """
 
-  @wip
   Scenario: A file that doesn't parse points at the mistake
     Given the file "broken.yaml":
       """yaml
@@ -67,7 +64,6 @@ Feature: marche validate
       """
     And the error points at line 8 of "broken.yaml"
 
-  @wip
   Scenario: A definition that isn't valid OWS points at the invalid value
     Given the file "broken.yaml":
       """yaml
@@ -89,7 +85,6 @@ Feature: marche validate
       """
     And the error points at line 1 of "broken.yaml"
 
-  @wip
   Scenario: A JSON definition's problems point at their line
     Given the file "fetch.json":
       """json
@@ -109,7 +104,6 @@ Feature: marche validate
       """
     And the error points at line 4 of "fetch.json"
 
-  @wip
   Scenario: Every problem is reported, each at its line
     Given the file "later.yaml":
       """yaml
@@ -147,7 +141,6 @@ Feature: marche validate
     And the error points at line 11 of "later.yaml"
     And the error points at line 16 of "later.yaml"
 
-  @wip
   Scenario: Expressions must be jq
     Given the file "script.yaml":
       """yaml
@@ -172,7 +165,6 @@ Feature: marche validate
       """
     And the error points at line 7 of "script.yaml"
 
-  @wip
   Scenario: Loose expressions aren't supported
     Given the file "loose.yaml":
       """yaml
@@ -196,7 +188,6 @@ Feature: marche validate
       """
     And the error points at line 7 of "loose.yaml"
 
-  @wip
   Scenario: then must name a task in the same list
     Given the file "jump.yaml":
       """yaml
@@ -222,7 +213,6 @@ Feature: marche validate
       """
     And the error points at line 10 of "jump.yaml"
 
-  @wip
   Scenario: The parallel for settings must have their documented types
     Given the file "each.yaml":
       """yaml
@@ -256,7 +246,6 @@ Feature: marche validate
     And the error points at line 13 of "each.yaml"
     And the error points at line 14 of "each.yaml"
 
-  @wip
   Scenario: A setting the parallel for extension doesn't have is rejected
     Given the file "each.yaml":
       """yaml
@@ -287,7 +276,6 @@ Feature: marche validate
       """
     And the error points at line 14 of "each.yaml"
 
-  @wip
   Scenario: Only for tasks take marche settings
     Given the file "greet.yaml":
       """yaml
@@ -312,7 +300,6 @@ Feature: marche validate
       """
     And the error points at line 11 of "greet.yaml"
 
-  @wip
   Scenario: A parallel for can't use while
     Given the file "each.yaml":
       """yaml
@@ -343,7 +330,6 @@ Feature: marche validate
       """
     And the error points at line 11 of "each.yaml"
 
-  @wip
   Scenario: Tasks inside a parallel for can't use export
     Given the file "each.yaml":
       """yaml
@@ -375,7 +361,6 @@ Feature: marche validate
       """
     And the error points at line 18 of "each.yaml"
 
-  @wip
   Scenario: A file that doesn't exist can't be read
     When I run "marche validate missing.yaml"
     Then the command fails with exit code 2

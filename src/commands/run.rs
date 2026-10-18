@@ -39,9 +39,9 @@ pub async fn run(args: Args, target: &Target, quiet: bool) -> Result<ExitCode, E
         None => json!({}),
     };
     let directory = std::env::current_dir()
-        .map_err(|source| Error::Read {
+        .map_err(|error| Error::Read {
             path: ".".into(),
-            source,
+            error,
         })?
         .to_string_lossy()
         .into_owned();
