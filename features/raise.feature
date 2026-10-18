@@ -8,7 +8,6 @@ Feature: Raise
   Errors defined in `use.errors` and raised by name aren't supported yet, so
   `marche run` rejects a raise that names one, before the run starts.
 
-  @wip
   Scenario: A raised error's fields can be expressions
     Given a workflow with definition:
       """yaml
@@ -42,7 +41,6 @@ Feature: Raise
       """
     And refuse should fault
 
-  @wip
   Scenario: A raised error keeps the instance it gives
     Given a workflow with definition:
       """yaml
@@ -66,7 +64,6 @@ Feature: Raise
       instance: /kitchen/soup
       """
 
-  @wip
   Scenario: marche run prints a raised error
     Given the file "soup.yaml":
       """yaml
@@ -92,7 +89,6 @@ Feature: Raise
       The kitchen ran out.
       """
 
-  @wip
   Scenario: A raise that names an error from use.errors is rejected before the run starts
     Given the file "soup.yaml":
       """yaml

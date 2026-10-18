@@ -18,7 +18,7 @@ use super::world::{MarcheWorld, docstring, marche};
 /// Task types the interpreter supports. A conformance scenario runs only when
 /// every task in its definition is listed here, so each task type's work adds
 /// its name when it lands.
-const SUPPORTED: &[&str] = &["do", "set", "run: shell", "switch"];
+const SUPPORTED: &[&str] = &["do", "set", "run: shell", "switch", "raise"];
 
 /// `do` comes last, because `for` tasks have a `do` too.
 const TASK_TYPES: &[&str] = &[

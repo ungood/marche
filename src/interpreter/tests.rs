@@ -350,3 +350,135 @@ do:
     assert_eq!(error.status, 400);
     assert_eq!(error.instance.as_deref(), Some("/do/0/pick"));
 }
+
+#[test]
+fn raise_faults_with_its_error_at_its_reference() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - refuse:
+      raise:
+        error:
+          type: ${ "https://example.com/errors/" + .reason }
+          status: 409
+          title: ${ "No " + .dish }
+          detail: The kitchen ran out.
+  - never:
+      set: {}
+"#,
+        json!({"dish": "soup", "reason": "sold-out"}),
+    );
+    assert_eq!(
+        output,
+        Err(Halt::Fault(ows::Error {
+            kind: "https://example.com/errors/sold-out".into(),
+            status: 409,
+            title: Some("No soup".into()),
+            detail: Some("The kitchen ran out.".into()),
+            instance: Some("/do/0/refuse".into()),
+        }))
+    );
+    assert_eq!(
+        *host.events.borrow(),
+        ["started /do/0/refuse", "faulted /do/0/refuse"]
+    );
+}
+
+#[test]
+fn raise_keeps_an_instance_it_gives() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - refuse:
+      raise:
+        error:
+          type: https://example.com/errors/sold-out
+          status: 409
+          instance: ${ "/kitchen/" + .dish }
+"#,
+        json!({"dish": "soup"}),
+    );
+    let Err(Halt::Fault(error)) = output else {
+        panic!("expected a fault: {output:?}")
+    };
+    assert_eq!(error.instance.as_deref(), Some("/kitchen/soup"));
+    assert_eq!(error.title, None);
+}
+
+#[test]
+fn raise_fields_must_be_strings() {
+    let host = FakeHost::default();
+    let output = run(
+        &host,
+        r#"
+do:
+  - refuse:
+      raise:
+        error:
+          type: https://example.com/errors/sold-out
+          status: 409
+          title: ${ .count }
+"#,
+        json!({"count": 3}),
+    );
+    let Err(Halt::Fault(error)) = output else {
+        panic!("expected a fault: {output:?}")
+    };
+    assert_eq!(error.status, 400);
+    assert_eq!(
+        error.detail.as_deref(),
+        Some("The error's title must be a string, but it's 3.")
+    );
+}
+
+#[test]
+fn review_loop_gives_up_after_three_attempts() {
+    let host = FakeHost::default();
+    for code in [1, 0, 1, 0, 1] {
+        host.results.borrow_mut().push(exited(code, "", ""));
+    }
+    let output = run(
+        &host,
+        include_str!("../../examples/review-loop.yaml"),
+        json!({}),
+    );
+    let Err(Halt::Fault(error)) = output else {
+        panic!("expected a fault: {output:?}")
+    };
+    assert_eq!(error.status, 422);
+    assert_eq!(error.instance.as_deref(), Some("/do/4/giveUp"));
+    let commands: Vec<String> = host
+        .requests
+        .borrow()
+        .iter()
+        .map(|request| request.command.clone())
+        .collect();
+    assert_eq!(
+        commands,
+        [
+            "./review.sh",
+            "./fix.sh",
+            "./review.sh",
+            "./fix.sh",
+            "./review.sh"
+        ]
+    );
+}
+
+#[test]
+fn review_loop_ends_when_the_review_passes() {
+    let host = FakeHost::default();
+    for code in [1, 0, 0] {
+        host.results.borrow_mut().push(exited(code, "", ""));
+    }
+    let output = run(
+        &host,
+        include_str!("../../examples/review-loop.yaml"),
+        json!({}),
+    );
+    assert_eq!(output, Ok(json!({"attempt": 2, "passed": true})));
+}

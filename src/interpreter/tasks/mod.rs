@@ -3,6 +3,7 @@
 //! `SUPPORTED` in `tests/steps/ows.rs`.
 
 mod do_list;
+mod raise;
 mod run;
 mod set;
 mod switch;
@@ -18,6 +19,8 @@ pub async fn execute<H: Host>(
     let definition = task.definition;
     if definition.get("set").is_some() {
         set::execute(task)
+    } else if definition.get("raise").is_some() {
+        raise::execute(task)
     } else if definition.get("switch").is_some() {
         switch::execute(task)
     } else if definition.get("run").is_some() {
