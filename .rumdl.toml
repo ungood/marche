@@ -1,0 +1,4 @@
+[global]
+exclude = ["target", "vendor"]
+# Prose is one line per paragraph, wrapped by the editor.
+disable = ["MD013"]
