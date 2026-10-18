@@ -582,7 +582,6 @@ Feature: marche run
       No worker is serving the task queue marche
       """
 
-  @wip
   Scenario: A task finishes after the tasks inside it
     Given the file "cook.yaml":
       """yaml
