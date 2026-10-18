@@ -159,6 +159,41 @@ do:
     assert_eq!(host.requests.borrow().len(), 2);
 }
 
+#[test]
+fn each_run_of_a_step_names_its_own_record() {
+    for parallel in [false, true] {
+        let host = FakeHost::default();
+        for dish in ["soup", "fish"] {
+            host.results.borrow_mut().push(exited(0, dish, ""));
+        }
+        let definition = format!(
+            "
+do:
+  - serve:
+      for:
+        in: [ soup, fish ]
+      metadata:
+        marche:
+          parallel: {parallel}
+      do:
+        - plate:
+            run:
+              shell:
+                command: plate
+"
+        );
+        let output = run(&host, &definition, json!({}));
+        assert!(output.is_ok(), "{output:?}");
+        let records: Vec<usize> = host.requests.borrow().iter().map(|r| r.record).collect();
+        let references = host.records.borrow();
+        assert_eq!(records.len(), 2, "parallel: {parallel}");
+        assert_ne!(records[0], records[1], "parallel: {parallel}");
+        for record in records {
+            assert_eq!(references[record], "/do/0/serve/do/0/plate");
+        }
+    }
+}
+
 /// A parallel loop over the dishes, whose iterations run `./cook <dish>`, with
 /// one more setting under `metadata.marche`.
 fn cook(setting: &str) -> String {

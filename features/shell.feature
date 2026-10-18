@@ -245,7 +245,6 @@ Feature: Shell steps
       """
     And count should have a standard output log of 588895 bytes
 
-  @wip
   Scenario: Each run of a step keeps logs of its own
     Given a workflow with definition:
       """yaml

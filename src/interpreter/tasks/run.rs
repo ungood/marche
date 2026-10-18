@@ -51,6 +51,7 @@ pub async fn execute<H: Host>(
     };
     let request = ShellRequest {
         reference: task.reference.to_string(),
+        record: task.record,
         command,
         arguments,
         environment,

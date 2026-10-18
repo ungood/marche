@@ -70,12 +70,14 @@ impl Halt {
 pub trait Host {
     /// The workflow clock, which replays identically.
     fn now(&self) -> SystemTime;
-    /// Records that a task started, and returns the record's ID. A reference
-    /// isn't enough to find the record again, because a loop's iterations
-    /// run the same tasks, at the same time when it's parallel.
+    /// Records that a task started, and returns the record's ID, which is
+    /// unique within the run, across continuing as new. A reference isn't
+    /// enough to find the record again, because a loop's iterations run the
+    /// same tasks, at the same time when it's parallel.
     fn task_started(&self, reference: &str, name: &str) -> usize;
     fn task_finished(&self, record: usize, result: &Result<Value, Halt>);
-    /// Runs a shell step. Cancelling `token` stops it, and the future resolves
+    /// Runs a shell step, for the task record `request.record`, which gets
+    /// the step's log. Cancelling `token` stops it, and the future resolves
     /// with [`Halt::Cancelled`] once the step's processes have exited.
     fn shell(
         &self,
@@ -139,6 +141,8 @@ pub struct Task<'a> {
     /// The task's definition, the object under its name.
     pub definition: &'a Value,
     pub reference: &'a str,
+    /// The ID of the task's record, from [`Host::task_started`].
+    pub record: usize,
     /// The transformed input, after `input.from`.
     pub input: Value,
     /// The expression arguments, with `$input` and `$task` set.
@@ -529,7 +533,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
             None => Input::Raw(input),
         };
         let result = self
-            .execute(name, definition, reference, input, scope, token)
+            .execute(name, definition, reference, record, input, scope, token)
             .await;
         // A task that continues as new carries on in the next run, which
         // records how it ends.
@@ -548,11 +552,13 @@ impl<'h, H: Host> Interpreter<'h, H> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn execute(
         &self,
         name: &str,
         definition: &Value,
         reference: &str,
+        record: usize,
         input: Input,
         mut scope: Scope,
         token: &Token,
@@ -577,6 +583,7 @@ impl<'h, H: Host> Interpreter<'h, H> {
                     name,
                     definition,
                     reference,
+                    record,
                     input,
                     scope,
                     token: &token,

@@ -8,7 +8,6 @@ Feature: marche show
   "error", "log"}]}`. marche asks a worker for the tasks, even after the run
   has ended.
 
-  @wip
   Scenario: Show lists each task with its output and logs
     Given the file "hello.yaml":
       """yaml

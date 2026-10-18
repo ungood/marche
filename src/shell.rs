@@ -31,6 +31,9 @@ const GUARD_MARGIN: Duration = Duration::from_secs(5);
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ShellRequest {
     pub reference: String,
+    /// The ID of the step's task record, unique within the run's chain, which
+    /// gives each run of the step logs of its own.
+    pub record: usize,
     pub command: String,
     pub arguments: Vec<String>,
     pub environment: BTreeMap<String, String>,
@@ -97,7 +100,8 @@ impl ShellActivities {
             .state_dir
             .join("runs")
             .join(&run)
-            .join(request.reference.trim_start_matches('/'));
+            .join(request.reference.trim_start_matches('/'))
+            .join(request.record.to_string());
         let attempt = info.attempt;
         let reference = &request.reference;
         if self.verbose {

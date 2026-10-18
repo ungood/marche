@@ -99,7 +99,6 @@ Feature: Continuing as new
     And cook should run first
     And plate should run last
 
-  @wip
   Scenario: Steps in later runs keep logs of their own
     Given the worker continues runs as new after every 2 tasks
     And a workflow with definition:
