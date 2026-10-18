@@ -5,6 +5,9 @@ rumdl = "0.2.79"
 "aqua:temporalio/cli" = "1.9.1"
 # The Temporal SDK compiles its protobuf definitions at build time.
 protoc = "36.2"
+# actionlint checks the workflows' shell steps with shellcheck.
+actionlint = "1.7.12"
+shellcheck = "0.11.0"
 
 [tasks.build]
 description = "Build the marche binary"
@@ -23,11 +26,12 @@ description = "Run marche's features and the Open Workflow conformance kit"
 run = "cargo test --test cucumber"
 
 [tasks.lint]
-description = "Check formatting, run clippy, and lint Markdown"
+description = "Check formatting, run clippy, and lint Markdown and GitHub workflows"
 run = [
   "cargo fmt --check",
   "cargo clippy --all-targets -- -D warnings",
   "rumdl check",
+  "actionlint",
 ]
 
 [tasks.fmt]
@@ -40,8 +44,8 @@ run = '''
 #!/usr/bin/env bash
 set -euo pipefail
 cargo build --release --locked
-pkgid=$(cargo pkgid)
-version=${pkgid##*[#@]}
+# build.rs takes the version from git, so ask the binary rather than Cargo.toml.
+version=$(target/release/marche --version | cut -d' ' -f2)
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 mkdir -p dist
 tar -czf "dist/marche-$version-$os-$(uname -m).tar.gz" -C target/release marche
