@@ -24,15 +24,19 @@ Feature: Crash recovery
         - simmer:
             run:
               shell:
-                command: sleep 3 && echo "$1 is ready"
+                command: |
+                  echo started >> attempts
+                  sleep 3
+                  echo "$1 is ready after $(wc -l < attempts | tr -d ' ') attempts"
                 arguments:
                   - ${ .dish }
       """
     And the workflow is running its simmer task
+    And the workflow has written the file "attempts"
     When the worker is killed and started again
     Then the workflow should complete with output:
       """yaml
-      soup is ready
+      soup is ready after 2 attempts
       """
     And prepare should run before simmer
 

@@ -30,7 +30,7 @@ Feature: marche show
     And "hello.yaml" has run
     When I run "marche show $RUN"
     Then the command succeeds
-    And the output says:
+    And the output says, in order:
       """
       $RUN completed
       completed /do/0/greet
@@ -60,7 +60,7 @@ Feature: marche show
     And "fail.yaml" has run
     When I run "marche show $RUN"
     Then the command succeeds
-    And the output says:
+    And the output says, in order:
       """
       $RUN faulted
       faulted /do/0/check

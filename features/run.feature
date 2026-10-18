@@ -64,7 +64,7 @@ Feature: marche run
       """
     When I run "marche run hello.yaml"
     Then the command succeeds
-    And marche prints:
+    And marche prints, in order:
       """
       started /do/0/greet
       completed /do/0/greet

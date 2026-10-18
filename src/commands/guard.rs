@@ -222,10 +222,23 @@ mod tests {
 
     #[tokio::test]
     async fn stopping_terminates_the_whole_group() {
-        let child = start("sleep 60 & wait");
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "sleep 60 & echo ready; wait $!"])
+            .stdout(std::process::Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
         let group = child.id().unwrap() as libc::pid_t;
+        // Wait until sleep has started, so there's more than sh to stop.
+        let mut ready = [0; 6];
+        tokio::io::AsyncReadExt::read_exact(child.stdout.as_mut().unwrap(), &mut ready)
+            .await
+            .unwrap();
         let status = supervise(child, async {}, TERMINATION_GRACE).await.unwrap();
-        assert_eq!(status.signal(), Some(libc::SIGTERM));
+        // sh dies of SIGTERM, or, if sleep dies first, exits as sleep did.
+        let terminated =
+            status.signal() == Some(libc::SIGTERM) || status.code() == Some(128 + libc::SIGTERM);
+        assert!(terminated, "{status:?}");
         assert!(!running(group));
     }
 
