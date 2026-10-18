@@ -377,6 +377,25 @@ fn check_try(
             format!("{reference} uses catch.retry: {name}, which marche doesn't support yet."),
         );
     }
+    if retry.is_object()
+        // limit.attempt.duration isn't supported, and is reported below.
+        && [
+            "/delay",
+            "/limit/attempt/count",
+            "/limit/duration",
+            "/limit/attempt/duration",
+        ]
+        .iter()
+            .all(|pointer| retry.pointer(pointer).is_none())
+    {
+        note(
+            problems,
+            format!("{reference}/catch/retry"),
+            format!(
+                "{reference} retries with neither a delay nor a limit, so it would retry at once, forever. Give catch.retry a delay, limit.attempt.count or limit.duration."
+            ),
+        );
+    }
     if retry.pointer("/limit/attempt/duration").is_some() {
         note(
             problems,
@@ -684,6 +703,7 @@ mod tests {
         let definition = json!({
             "do": [
                 {"named": {"try": [], "catch": {"retry": "patient"}}},
+                {"eager": {"try": [], "catch": {"retry": {"backoff": {"constant": {}}}}}},
                 {"timed": {
                     "try": [{"ready": {"listen": {"to": {}}}}],
                     "catch": {
@@ -698,9 +718,10 @@ mod tests {
             messages(&definition),
             [
                 "/do/0/named uses catch.retry: patient, which marche doesn't support yet.",
-                "/do/1/timed has catch.then: nowhere, but its list has no task named nowhere.",
-                "/do/1/timed uses catch.retry.limit.attempt.duration, which marche doesn't support yet.",
-                "/do/1/timed/try/0/ready is a listen task, which marche doesn't support yet.",
+                "/do/1/eager retries with neither a delay nor a limit, so it would retry at once, forever. Give catch.retry a delay, limit.attempt.count or limit.duration.",
+                "/do/2/timed has catch.then: nowhere, but its list has no task named nowhere.",
+                "/do/2/timed uses catch.retry.limit.attempt.duration, which marche doesn't support yet.",
+                "/do/2/timed/try/0/ready is a listen task, which marche doesn't support yet.",
             ]
         );
     }

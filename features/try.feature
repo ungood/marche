@@ -12,6 +12,10 @@ Feature: Catching and retrying errors
   error, and without `catch.do` the task faults with it. Cancelling a run is
   never an error that `try` catches.
 
+  A retry policy needs a delay or a limit, or it would retry at once, forever.
+  Every retry waits on a timer, of at least a millisecond, so even a retry
+  without a delay lets Temporal see the run make progress.
+
   Scenario: A retry reruns a failing step until it succeeds
     Given a workflow with definition:
       """yaml
@@ -179,6 +183,34 @@ Feature: Catching and retrying errors
       """yaml
       title: Command failed
       instance: /do/0/attempt/try/0/check
+      """
+
+  Scenario: A retry with neither a delay nor a limit is rejected before the run starts
+    Given the file "eager.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: test
+        name: retry-eager
+        version: '0.1.0'
+      do:
+        - poll:
+            try:
+              - check:
+                  run:
+                    shell:
+                      command: exit 1
+            catch:
+              retry:
+                backoff:
+                  constant: {}
+      """
+    When I run "marche run eager.yaml"
+    Then the command fails
+    And the error says:
+      """
+      eager.yaml can't run on marche yet.
+      /do/0/poll retries with neither a delay nor a limit, so it would retry at once, forever. Give catch.retry a delay, limit.attempt.count or limit.duration.
       """
 
   Scenario: A retry policy named from use is rejected before the run starts
