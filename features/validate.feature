@@ -361,6 +361,26 @@ Feature: marche validate
       """
     And the error points at line 18 of "each.yaml"
 
+  Scenario: A duration must have a fixed length
+    Given the file "rest.yaml":
+      """yaml
+      document:
+        dsl: '1.0.4'
+        namespace: examples
+        name: rest
+        version: '0.1.0'
+      do:
+        - rest:
+            wait: P1W
+      """
+    When I run "marche validate rest.yaml"
+    Then the command fails with exit code 1
+    And the error says:
+      """
+      /do/0/rest sets wait to "P1W", which isn't a duration marche supports. Write days, hours, minutes and seconds, such as P1DT12H, up to 100 years: weeks, months and years have no fixed length.
+      """
+    And the error points at line 8 of "rest.yaml"
+
   Scenario: A file that doesn't exist can't be read
     When I run "marche validate missing.yaml"
     Then the command fails with exit code 2

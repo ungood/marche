@@ -171,6 +171,7 @@ fn next_delay(
         let spread = to.saturating_sub(from).mul_f64(random());
         delay = delay.saturating_add(from).saturating_add(spread);
     }
+    let delay = delay.min(crate::interpreter::duration::MAX);
     if let Some(limit) = duration("/limit/duration")?
         && elapsed.saturating_add(delay) > limit
     {

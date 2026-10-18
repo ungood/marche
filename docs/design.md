@@ -95,7 +95,7 @@ The interpreter follows the OWS 1.0.x DSL and its reference. This section record
 | `switch` | Yes | Cases are checked in order. `then` can name a task in the same list, `continue`, `exit` or `end`. When no case matches, the switch's own `then` applies. |
 | `raise` | Yes | Inline errors, whose `type`, `title`, `detail` and `instance` may be expressions. `instance` defaults to the task's reference. Errors from `use.errors` come with `use`. |
 | `try` | Yes | `catch` with `errors.with`, `when`, `exceptWhen`, `as`, `retry` and `do`. |
-| `wait` | Yes | A Temporal timer. Both duration forms are accepted. |
+| `wait` | Yes | A Temporal timer. Both duration forms are accepted, up to 100 years. ISO 8601 durations use days, hours, minutes and seconds, as plain decimals, because weeks, months and years have no fixed length. `marche run` rejects a duration written in the definition that isn't one, and one an expression gives faults with a `runtime` error titled `Invalid duration`. |
 | `run: shell` | Yes | See [Shell steps](#shell-steps). |
 | `for` | Yes | Sequential by default, or parallel with the [extension](#extension-parallel-for). `in` must give an array. `while` is checked before each iteration, with the item and index bound, on the data the iteration would get. Every iteration's tasks have the same references, so task records list them once per iteration. |
 | `fork` | Yes | Concurrent branches, with or without `compete`. A branch skipped by its `if` keeps its place in the output with its input, as a skipped task's output is its input, but never wins a compete. When every branch is skipped, the fork's output is its input. A branch's `then: end` ends the workflow once the fork has finished, and its other `then` values are ignored. |

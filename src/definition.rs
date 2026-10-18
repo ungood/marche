@@ -9,6 +9,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Problem, SyntaxError};
+use crate::interpreter::duration;
 use crate::interpreter::schema::{self, Unusable};
 use crate::spans::Spans;
 
@@ -36,6 +37,15 @@ const TASK_LISTS: &[&str] = &["/do", "/try", "/catch/do", "/fork/branches"];
 /// JSON pointers relative to the workflow or a task.
 const UNSUPPORTED_WORKFLOW: &[&str] = &["/use", "/schedule"];
 const UNSUPPORTED_TASK: &[&str] = &[];
+/// Where a workflow or task gives a duration.
+const DURATIONS: &[&str] = &[
+    "/timeout/after",
+    "/wait",
+    "/catch/retry/delay",
+    "/catch/retry/jitter/from",
+    "/catch/retry/jitter/to",
+    "/catch/retry/limit/duration",
+];
 
 #[derive(Debug, Clone)]
 pub struct Definition {
@@ -378,7 +388,7 @@ fn check_try(
     }
 }
 
-/// The schemas and timeout of the workflow or a task. `at` is its JSON
+/// The schemas, timeout and durations of the workflow or a task. `at` is its JSON
 /// pointer, and `who` names it in messages.
 fn check_data(owner: &Value, at: &str, who: &str, problems: &mut Vec<(String, String)>) {
     for field in ["input", "output", "export"] {
@@ -408,6 +418,30 @@ fn check_data(owner: &Value, at: &str, who: &str, problems: &mut Vec<(String, St
             format!("{at}/timeout"),
             format!("{who} uses the named timeout {name}, which marche doesn't support yet."),
         );
+    }
+    for pointer in DURATIONS {
+        let Some(value) = owner.pointer(pointer).filter(|value| !is_expression(value)) else {
+            continue;
+        };
+        if duration::parse(value).is_err() {
+            note(
+                problems,
+                format!("{at}{pointer}"),
+                format!(
+                    "{who} sets {} to {value}, which isn't a duration marche supports. Write days, hours, minutes and seconds, such as P1DT12H, up to 100 years: weeks, months and years have no fixed length.",
+                    setting(pointer)
+                ),
+            );
+        }
+    }
+}
+
+/// Whether a duration is, or holds, an expression, which only a run can check.
+fn is_expression(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.contains("${"),
+        Value::Object(fields) => fields.values().any(is_expression),
+        _ => false,
     }
 }
 
@@ -580,6 +614,35 @@ mod tests {
                 "The workflow uses an output.schema in the avro format, which marche doesn't support yet.",
                 "/do/0/cook uses an input.schema that isn't a valid JSON Schema: 5 is not valid under any of the schemas listed in the 'anyOf' keyword at /type.",
                 "/do/0/cook uses an export.schema that refers to file:///etc/context.json, which marche doesn't fetch, because a run must replay the same way every time.",
+            ]
+        );
+    }
+
+    #[test]
+    fn checks_literal_durations() {
+        let definition = json!({
+            "timeout": {"after": "P1W"},
+            "do": [
+                {"rest": {"wait": "P1M"}},
+                {"nap": {"wait": {"days": 300_000_000_000_000_u64}}},
+                {"later": {"wait": "${ .after }"}},
+                {"poll": {
+                    "try": [],
+                    "catch": {"retry": {
+                        "delay": "P1Y",
+                        "limit": {"duration": {"minutes": 5}},
+                    }},
+                }},
+            ]
+        });
+        let tail = "which isn't a duration marche supports. Write days, hours, minutes and seconds, such as P1DT12H, up to 100 years: weeks, months and years have no fixed length.";
+        assert_eq!(
+            messages(&definition),
+            [
+                format!("The workflow sets timeout.after to \"P1W\", {tail}"),
+                format!("/do/0/rest sets wait to \"P1M\", {tail}"),
+                format!("/do/1/nap sets wait to {{\"days\":300000000000000}}, {tail}"),
+                format!("/do/3/poll sets catch.retry.delay to \"P1Y\", {tail}"),
             ]
         );
     }
