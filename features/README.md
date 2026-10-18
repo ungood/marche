@@ -32,6 +32,7 @@ Outcome:
 - `the output says:` with the expected text as a doc string. Each line must appear in standard output, after colors and the margin of wrapped lines are removed and whitespace is collapsed.
 - `the error says:` matches standard error the same way, and `marche prints:` matches both streams together.
 - `the JSON output contains:` with a JSON doc string. Standard output must be JSON with every field given.
+- `the process whose ID is in "<path>" has exited`, for a file in the scenario's directory that a shell step wrote its process ID to, such as with `echo $$ > <path> && exec sleep 30`.
 
 ## Conformance kit steps
 
