@@ -12,10 +12,11 @@ use temporalio_common::error::IncomingError;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityCancellationType, ActivityExecutionError, ActivityOptions, ApplicationFailure,
-    WorkflowContext, WorkflowContextView, WorkflowResult, WorkflowTermination,
+    TimerOptions, TimerResult, WorkflowContext, WorkflowContextView, WorkflowResult,
+    WorkflowTermination,
 };
 
-use crate::interpreter::{Halt, Host, Interpreter};
+use crate::interpreter::{Halt, Host, Interpreter, Token};
 use crate::ows::{self, Status, TaskRecord};
 use crate::shell::{ShellActivities, ShellRequest, ShellResult};
 
@@ -50,7 +51,9 @@ impl Interpret {
         let host = WorkflowHost { ctx: ctx.clone() };
         let id = ctx.workflow_id().to_string();
         let mut interpreter = Interpreter::new(&host, input.definition, &id, &input.directory);
-        match interpreter.run(input.input).await {
+        // The run's root scope: Temporal cancels it when the run is cancelled.
+        let token = ctx.cancellation_token();
+        match interpreter.run(input.input, &token).await {
             Ok(output) => Ok(output),
             Err(Halt::Cancelled) => Err(WorkflowTermination::cancelled()),
             Err(Halt::Fault(error)) => Err(ApplicationFailure::builder(error.clone())
@@ -115,7 +118,33 @@ impl Host for WorkflowHost {
         });
     }
 
-    fn shell(&self, request: ShellRequest) -> LocalBoxFuture<'_, Result<ShellResult, Halt>> {
+    fn timer(&self, duration: Duration, token: &Token) -> LocalBoxFuture<'_, Result<(), Halt>> {
+        let options = TimerOptions::builder(duration)
+            .cancellation_token(token.clone())
+            .build();
+        let timer = self.ctx.timer(options);
+        async move {
+            match timer.await {
+                TimerResult::Fired => Ok(()),
+                TimerResult::Cancelled => Err(Halt::Cancelled),
+            }
+        }
+        .boxed_local()
+    }
+
+    fn random(&self, stream: &str) -> f64 {
+        self.ctx.random_stream(stream).random::<f64>()
+    }
+
+    fn continue_as_new_suggested(&self) -> bool {
+        self.ctx.continue_as_new_suggested()
+    }
+
+    fn shell(
+        &self,
+        request: ShellRequest,
+        token: &Token,
+    ) -> LocalBoxFuture<'_, Result<ShellResult, Halt>> {
         let reference = request.reference.clone();
         let options = ActivityOptions::with_start_to_close_timeout(SHELL_TIMEOUT)
             .heartbeat_timeout(SHELL_HEARTBEAT_TIMEOUT)
@@ -126,6 +155,7 @@ impl Host for WorkflowHost {
                     .build(),
             )
             .summary(reference.clone())
+            .cancellation_token(token.clone())
             .build();
         async move {
             let result = self
