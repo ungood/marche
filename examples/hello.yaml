@@ -1,0 +1,15 @@
+document:
+  dsl: '1.0.4'
+  namespace: examples
+  name: hello
+  version: '0.1.0'
+do:
+  - greet:
+      set:
+        name: ${ .name // "world" }
+  - say:
+      run:
+        shell:
+          command: echo "Hello, $1"
+          arguments:
+            - ${ .name }

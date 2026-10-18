@@ -1,0 +1,23 @@
+document:
+  dsl: '1.0.4'
+  namespace: examples
+  name: parallel-for
+  version: '0.1.0'
+do:
+  - testEachCrate:
+      for:
+        each: crate
+        in: .crates
+      metadata:
+        marche:
+          parallel: true
+          maxConcurrency: 4
+          cancelOnFailure: true
+      do:
+        - test:
+            run:
+              shell:
+                command: cargo test -p "$1"
+                arguments:
+                  - ${ $crate }
+              return: all
