@@ -39,7 +39,6 @@ Feature: marche worker
       Couldn't connect to Temporal at 127.0.0.1:1
       """
 
-  @wip
   Scenario: -q prints nothing while the worker runs
     Given a Temporal server with no worker
     When I run "marche worker -q" for 3 seconds

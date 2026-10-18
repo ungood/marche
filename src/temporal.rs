@@ -108,7 +108,7 @@ impl Temporal {
                 namespace: self.namespace.clone(),
             }))
             .await
-            .map_err(|status| self.rpc_error(&status))?
+            .map_err(|status| registration_error(&self.namespace, &status))?
             .into_inner()
             .custom_attributes;
         let missing: HashMap<String, i32> = SEARCH_ATTRIBUTES
@@ -125,15 +125,45 @@ impl Temporal {
                 namespace: self.namespace.clone(),
             }))
             .await
-            .map_err(|status| self.rpc_error(&status))?;
+            .map_err(|status| registration_error(&self.namespace, &status))?;
         Ok(())
     }
+}
 
-    fn rpc_error(&self, status: &Status) -> Error {
-        if status.code() == Code::NotFound && status.message().contains("amespace") {
-            Error::NoNamespace(self.namespace.clone())
-        } else {
-            Error::Worker(status.message().to_string())
-        }
+/// Whether Temporal refused a request because the namespace doesn't exist.
+pub fn is_missing_namespace(status: &Status) -> bool {
+    status.code() == Code::NotFound && status.message().to_lowercase().contains("namespace")
+}
+
+/// The error for a failure to list or add the search attributes.
+fn registration_error(namespace: &str, status: &Status) -> Error {
+    if is_missing_namespace(status) {
+        Error::NoNamespace(namespace.to_string())
+    } else {
+        Error::Register(status.message().to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_namespace_is_its_own_error() {
+        let status = Status::not_found("Namespace nope is not found.");
+        assert!(matches!(
+            registration_error("nope", &status),
+            Error::NoNamespace(name) if name == "nope"
+        ));
+    }
+
+    #[test]
+    fn other_registration_failures_say_what_failed() {
+        let status = Status::permission_denied("Request unauthorized.");
+        let error = registration_error("default", &status);
+        assert_eq!(
+            error.to_string(),
+            "Couldn't register marche's search attributes: Request unauthorized."
+        );
     }
 }
