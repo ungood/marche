@@ -5,16 +5,17 @@
 //! workflow and waits for it, and `marche show --json` lists its tasks in the
 //! order they started.
 
-use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use cucumber::gherkin::{Scenario, Step};
 use cucumber::{given, then, when};
 use serde_json::Value;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 
-use super::services::{self, Services};
-use super::shell;
-use super::world::{MarcheWorld, docstring, marche};
+use super::services::Services;
+use super::world::{MarcheWorld, Pending, docstring, marche};
+use super::{inspect, shell};
 
 /// Task types the interpreter supports. A conformance scenario runs only when
 /// every task in its definition is listed here, so each task type's work adds
@@ -36,20 +37,31 @@ const TASK_TYPES: &[&str] = &[
     "call", "emit", "for", "fork", "listen", "raise", "run", "set", "switch", "try", "wait", "do",
 ];
 
-/// Whether marche runs this scenario. Scenarios without a workflow definition
-/// are marche's own and always run.
+/// The processes a `run` task can run. Its other keys, such as `return` and
+/// `await`, are settings.
+const PROCESSES: &[&str] = &["shell", "script", "container", "workflow"];
+
+/// Whether marche runs this conformance kit scenario. Scenarios without a
+/// workflow definition always run.
 pub fn is_supported(scenario: &Scenario) -> bool {
+    unsupported(scenario).is_empty()
+}
+
+/// The task types in the scenario's workflow definition that aren't in
+/// `SUPPORTED`.
+pub fn unsupported(scenario: &Scenario) -> Vec<String> {
     let Some(step) = scenario
         .steps
         .iter()
         .find(|step| step.value == "a workflow with definition:")
     else {
-        return true;
+        return Vec::new();
     };
     let definition: Value = serde_yaml_ng::from_str(&docstring(step)).expect("definition is YAML");
     let mut types = Vec::new();
     task_types(&definition["do"], &mut types);
-    types.iter().all(|kind| SUPPORTED.contains(&kind.as_str()))
+    types.retain(|kind| !SUPPORTED.contains(&kind.as_str()));
+    types
 }
 
 /// Collects the type of every task in a task list, recursing into nested lists.
@@ -64,7 +76,10 @@ fn task_types(list: &Value, types: &mut Vec<String>) {
         if let Some(kind) = TASK_TYPES.iter().find(|kind| task.get(**kind).is_some()) {
             match (*kind, task["run"].as_object()) {
                 ("run", Some(run)) => {
-                    types.extend(run.keys().map(|process| format!("run: {process}")));
+                    let processes = PROCESSES
+                        .iter()
+                        .filter(|process| run.contains_key(**process));
+                    types.extend(processes.map(|process| format!("run: {process}")));
                 }
                 _ => types.push(kind.to_string()),
             }
@@ -91,7 +106,7 @@ fn input(world: &mut MarcheWorld, step: &Step) {
 }
 
 /// `marche run --json` for the scenario's definition and input.
-fn run_command(world: &MarcheWorld) -> Command {
+async fn run_command(world: &MarcheWorld) -> Command {
     let path = world.write(
         "workflow.yaml",
         world.definition.as_deref().expect("no workflow definition"),
@@ -99,8 +114,10 @@ fn run_command(world: &MarcheWorld) -> Command {
     let mut run = Command::new(marche());
     run.arg("run")
         .arg(&path)
-        .args(["--json", "--address", &world.address()])
-        .current_dir(world.work_dir());
+        .args(["--json", "--address", &world.address().await])
+        .current_dir(world.work_dir())
+        .env("NO_COLOR", "1")
+        .env("XDG_STATE_HOME", world.state_dir());
     if let Some(input) = &world.input {
         run.args(["--input", &input.to_string()]);
     }
@@ -108,52 +125,62 @@ fn run_command(world: &MarcheWorld) -> Command {
 }
 
 /// Records a finished run, and its tasks from `marche show --json`.
-pub fn finish(world: &mut MarcheWorld, result: Value) {
+pub async fn finish(world: &mut MarcheWorld, result: Value) {
     let id = result["run"]
         .as_str()
-        .expect("marche run --json has a run ID");
-    let show =
-        json(Command::new(marche()).args(["show", id, "--json", "--address", &world.address()]));
+        .expect("marche run --json has a run ID")
+        .to_string();
+    let show = json(
+        Command::new(marche())
+            .args(["show", &id, "--json", "--address", &world.address().await])
+            .env("NO_COLOR", "1")
+            .env("XDG_STATE_HOME", world.state_dir()),
+    )
+    .await;
+    world.run_id = Some(id);
     world.run = Some(result);
     world.show = Some(show);
 }
 
 #[when("the workflow is executed")]
-fn execute(world: &mut MarcheWorld) {
+async fn execute(world: &mut MarcheWorld) {
     let started = std::time::Instant::now();
-    let result = json(&mut run_command(world));
+    let result = json(&mut run_command(world).await).await;
     world.took = Some(started.elapsed());
-    finish(world, result);
+    finish(world, result).await;
 }
 
 #[given(regex = r"^the workflow is running its (\w+) task$")]
 async fn running(world: &mut MarcheWorld, task: String) {
     world.services = Some(Services::start().await);
     let mut child = run_command(world)
-        .env(
-            "XDG_STATE_HOME",
-            &world.services.as_ref().expect("services").state,
-        )
+        .await
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .expect("start marche run");
     let stderr = child.stderr.take().expect("run stderr");
-    world.pending = Some(child);
-    // marche run prints "started <reference>" as each task starts. Its output
-    // is read on another thread, so scenarios running beside this one carry on.
+    // marche run prints "started <reference>" as each task starts.
     let suffix = format!("/{task}");
-    let started = tokio::task::spawn_blocking(move || {
+    let (started, has_started) = tokio::sync::oneshot::channel();
+    let stderr = tokio::spawn(async move {
+        let mut started = Some(started);
+        let mut text = String::new();
         let mut lines = BufReader::new(stderr).lines();
-        let started = lines
-            .by_ref()
-            .map_while(Result::ok)
-            .any(|line| line.starts_with("started ") && line.ends_with(&suffix));
-        std::thread::spawn(move || lines.for_each(drop));
-        started
+        while let Ok(Some(line)) = lines.next_line().await {
+            if line.starts_with("started ") && line.ends_with(&suffix) {
+                started.take().map(|started| started.send(()));
+            }
+            text.push_str(&line);
+            text.push('\n');
+        }
+        text
     });
-    let started = started.await.expect("read marche run's output");
-    assert!(started, "{task} didn't start");
+    world.pending = Some(Pending { child, stderr });
+    assert!(has_started.await.is_ok(), "{task} didn't start");
+    let address = world.address().await;
+    world.run_id = Some(inspect::run_started_in(&address, &world.work_dir()).await);
 }
 
 /// Uses the worker's hidden test hook: it continues each run as new once that
@@ -177,12 +204,8 @@ async fn restart_worker(world: &mut MarcheWorld) {
 
 /// Runs marche and parses its standard output, whatever the exit code, since a
 /// faulted workflow still reports its result.
-fn json(command: &mut Command) -> Value {
-    let output = command
-        .env("NO_COLOR", "1")
-        .env("XDG_STATE_HOME", services::state_dir())
-        .output()
-        .expect("run marche");
+async fn json(command: &mut Command) -> Value {
+    let output = command.output().await.expect("run marche");
     serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(
             "marche didn't print JSON ({error}):\n{}\n{}",
@@ -346,7 +369,7 @@ fn runs_times(world: &mut MarcheWorld, name: String, count: usize) {
 #[then(regex = r"^the workflow should have continued as new (\d+) times?$")]
 async fn continued_as_new(world: &mut MarcheWorld, count: usize) {
     let id = run(world)["run"].as_str().expect("the run has an ID");
-    let address = world.address();
+    let address = world.address().await;
     // Every run in the chain has the workflow's ID, though visibility can take
     // a moment to list the last one.
     let mut runs = 0;
@@ -355,6 +378,7 @@ async fn continued_as_new(world: &mut MarcheWorld, count: usize) {
             .args(["workflow", "list", "--address", &address, "-o", "json"])
             .args(["--query", &format!("WorkflowId = '{id}'")])
             .output()
+            .await
             .expect("run temporal workflow list");
         let list: Value = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
         runs = list.as_array().map_or(0, Vec::len);

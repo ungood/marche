@@ -25,15 +25,24 @@ pub async fn wait_until(limit: Duration, what: &str, mut done: impl AsyncFnMut()
     }
 }
 
-/// Waits for the run started by `the workflow is running its <task> task`.
+/// Waits for the run started by `the workflow is running its <task> task`,
+/// and records it as the scenario's last command.
 pub async fn wait_for_run(world: &mut MarcheWorld) {
     let pending = world.pending.take().expect("the workflow isn't running");
-    let output = tokio::task::spawn_blocking(move || pending.wait_with_output())
+    let mut output = pending
+        .child
+        .wait_with_output()
         .await
-        .expect("wait for marche run")
         .expect("wait for marche run");
+    output.stderr = pending
+        .stderr
+        .await
+        .expect("read marche run's output")
+        .into_bytes();
     let result = serde_json::from_slice(&output.stdout).expect("marche run --json prints JSON");
-    finish(world, result);
+    // The run is the scenario's command, for steps such as `the command fails`.
+    world.last = Some(output);
+    finish(world, result).await;
 }
 
 #[given(regex = r#"^the workflow has written the file "([^"]+)"$"#)]
@@ -46,7 +55,7 @@ async fn written(world: &mut MarcheWorld, path: String) {
 #[when(regex = r"^the worker is killed and started again during each of (\d+) attempts$")]
 async fn lose_worker(world: &mut MarcheWorld, attempts: u32) {
     let services = world.services.as_mut().expect("the workflow isn't running");
-    let runs = services.state.join("marche/runs");
+    let runs = services.state().join("marche/runs");
     for attempt in 1..=attempts {
         // The activity creates the attempt's log before it starts the step.
         let log = format!("{attempt}.stdout");
@@ -90,29 +99,8 @@ async fn temporal(address: &str, args: &[&str]) -> Vec<u8> {
 
 #[when("the workflow is cancelled")]
 async fn cancel(world: &mut MarcheWorld) {
-    let address = world.address();
-    // The scenario's own server runs only this workflow.
-    let list = [
-        "workflow",
-        "list",
-        "--query",
-        "ExecutionStatus = 'Running'",
-        "--output",
-        "json",
-    ];
-    let mut id = None;
-    wait_until(PATIENCE, "the workflow isn't listed", async || {
-        let listed = temporal(&address, &list).await;
-        let listed: Value = serde_json::from_slice(&listed).unwrap_or(Value::Null);
-        id = listed
-            .as_array()
-            .and_then(|runs| runs.first())
-            .and_then(|run| run["execution"]["workflowId"].as_str())
-            .map(str::to_string);
-        id.is_some()
-    })
-    .await;
-    let id = id.expect("the workflow's ID");
+    let address = world.address().await;
+    let id = world.run_id.clone().expect("the workflow isn't running");
     let cancelled = Instant::now();
     temporal(&address, &["workflow", "cancel", "--workflow-id", &id]).await;
     wait_for_run(world).await;
