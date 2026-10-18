@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use crate::commands::Verbosity;
 use crate::definition;
 use crate::error::Error;
 
@@ -10,9 +11,9 @@ pub struct Args {
     file: PathBuf,
 }
 
-pub fn validate(args: Args, quiet: bool) -> Result<ExitCode, Error> {
+pub fn validate(args: Args, verbosity: Verbosity) -> Result<ExitCode, Error> {
     definition::load(&args.file)?;
-    if !quiet {
+    if verbosity != Verbosity::Quiet {
         println!("{} is valid, and marche can run it.", args.file.display());
     }
     Ok(ExitCode::SUCCESS)

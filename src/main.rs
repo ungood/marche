@@ -2,6 +2,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+use crate::commands::Verbosity;
+
 mod commands;
 mod definition;
 mod error;
@@ -20,8 +22,11 @@ struct Cli {
     #[command(flatten)]
     target: temporal::Target,
     /// Print only the result
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global = true, conflicts_with = "verbose")]
     quiet: bool,
+    /// Print each task's output or error as it finishes, and each step the worker runs
+    #[arg(short, long, global = true)]
+    verbose: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -45,11 +50,18 @@ async fn main() -> ExitCode {
     let _ = miette::set_hook(Box::new(|_| {
         Box::new(miette::MietteHandlerOpts::new().wrap_lines(false).build())
     }));
+    let verbosity = if cli.quiet {
+        Verbosity::Quiet
+    } else if cli.verbose {
+        Verbosity::Verbose
+    } else {
+        Verbosity::Normal
+    };
     let result = match cli.command {
-        Command::Run(args) => commands::run::run(args, &cli.target, cli.quiet).await,
+        Command::Run(args) => commands::run::run(args, &cli.target, verbosity).await,
         Command::Show(args) => commands::show::show(args, &cli.target).await,
-        Command::Validate(args) => commands::validate::validate(args, cli.quiet),
-        Command::Worker => commands::worker::worker(&cli.target).await,
+        Command::Validate(args) => commands::validate::validate(args, verbosity),
+        Command::Worker => commands::worker::worker(&cli.target, verbosity).await,
     };
     result.unwrap_or_else(|error| {
         let code = error.exit_code();

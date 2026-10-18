@@ -33,6 +33,7 @@ pub enum Error {
     },
 
     #[error("--input isn't JSON: {0}.")]
+    #[diagnostic(help("Quote the JSON for your shell, as in --input '{{\"name\": \"Ada\"}}'."))]
     Input(serde_json::Error),
 
     #[error("Couldn't connect to Temporal at {address}: {message}")]
@@ -43,6 +44,16 @@ pub enum Error {
 
     #[error("Couldn't load the Temporal configuration: {0}")]
     Config(String),
+
+    #[error("Temporal's configuration has no profile {0}.")]
+    #[diagnostic(help("`temporal config list` shows the profiles in temporal.toml."))]
+    NoProfile(String),
+
+    #[error("Temporal has no namespace {0}.")]
+    #[diagnostic(help(
+        "Create it with `temporal operator namespace create {0}`, or choose another with --namespace or TEMPORAL_NAMESPACE."
+    ))]
+    NoNamespace(String),
 
     #[error("Temporal doesn't know the search attribute {0}.")]
     #[diagnostic(help(

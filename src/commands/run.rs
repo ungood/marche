@@ -4,14 +4,15 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use temporalio_client::errors::{WorkflowGetResultError, WorkflowStartError};
+use temporalio_client::tonic::Code;
 use temporalio_client::{Client, WorkflowGetResultOptions, WorkflowHandle, WorkflowStartOptions};
 use temporalio_common::error::IncomingError;
 use temporalio_common::search_attributes::SearchAttributes;
 
-use crate::commands::show;
+use crate::commands::{Verbosity, show};
 use crate::definition;
 use crate::error::Error;
-use crate::ows::{self, Status};
+use crate::ows::{self, Status, TaskRecord};
 use crate::temporal::{DEFINITION, DEFINITION_HASH, DIRECTORY, Target};
 use crate::workflow::{Interpret, RunInput, TASK_QUEUE};
 
@@ -32,7 +33,7 @@ pub struct Args {
     json: bool,
 }
 
-pub async fn run(args: Args, target: &Target, quiet: bool) -> Result<ExitCode, Error> {
+pub async fn run(args: Args, target: &Target, verbosity: Verbosity) -> Result<ExitCode, Error> {
     let definition = definition::load(&args.file)?;
     let input = match &args.input {
         Some(input) => serde_json::from_str(input).map_err(Error::Input)?,
@@ -70,15 +71,23 @@ pub async fn run(args: Args, target: &Target, quiet: bool) -> Result<ExitCode, E
         .client
         .start_workflow(Interpret::run, run_input, options)
         .await
-        .map_err(start_error)?;
+        .map_err(|error| start_error(error, &temporal.namespace))?;
 
     if args.detach {
-        println!("{id}");
+        if args.json {
+            println!("{}", json!({"run": id, "status": "running"}));
+        } else {
+            println!("{id}");
+        }
         return Ok(ExitCode::SUCCESS);
     }
 
     let tasks = temporal.client.get_workflow_handle::<Interpret>(id.clone());
-    let mut progress = Progress::default();
+    let mut progress = Progress {
+        verbose: verbosity == Verbosity::Verbose,
+        printed: Vec::new(),
+    };
+    let quiet = verbosity == Verbosity::Quiet;
     let result = {
         let result = handle.get_result(WorkflowGetResultOptions::default());
         tokio::pin!(result);
@@ -140,7 +149,13 @@ pub async fn run(args: Args, target: &Target, quiet: bool) -> Result<ExitCode, E
     Ok(ExitCode::SUCCESS)
 }
 
-fn start_error(error: WorkflowStartError) -> Error {
+fn start_error(error: WorkflowStartError, namespace: &str) -> Error {
+    if let WorkflowStartError::Rpc(status) = &error
+        && status.code() == Code::NotFound
+        && status.message().contains("amespace")
+    {
+        return Error::NoNamespace(namespace.to_string());
+    }
     let message = error.to_string();
     match [
         "MarcheDefinition",
@@ -166,8 +181,9 @@ fn fault(failure: IncomingError) -> ows::Error {
 }
 
 /// Prints each task as it starts and finishes, from the run's `tasks` query.
-#[derive(Default)]
 struct Progress {
+    /// Whether to print each finished task's output or error.
+    verbose: bool,
     /// The status last printed for each task, by its position in the run.
     printed: Vec<Status>,
 }
@@ -183,9 +199,23 @@ impl Progress {
                 self.printed.push(Status::Running);
             }
             if task.status != self.printed[index] {
-                eprintln!("{} {}", task.status.as_str(), task.reference);
+                eprintln!("{}", self.finished(task));
                 self.printed[index] = task.status;
             }
+        }
+    }
+
+    /// The line for a task that has finished: its status and reference, and
+    /// with `-v`, its output or error.
+    fn finished(&self, task: &TaskRecord) -> String {
+        let line = format!("{} {}", task.status.as_str(), task.reference);
+        if !self.verbose {
+            return line;
+        }
+        match (&task.output, &task.error) {
+            (_, Some(error)) => format!("{line}: {}", error.summary()),
+            (Some(output), None) => format!("{line}: {output}"),
+            (None, None) => line,
         }
     }
 }

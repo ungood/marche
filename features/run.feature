@@ -204,7 +204,6 @@ Feature: marche run
       /document: "version" is a required property
       """
 
-  @wip
   Scenario: -v adds each task's output to its line
     Given the file "hello.yaml":
       """yaml
@@ -233,7 +232,6 @@ Feature: marche run
       completed /do/1/say: "Hello, world"
       """
 
-  @wip
   Scenario: -v adds a faulted task's error to its line
     Given the file "fail.yaml":
       """yaml
@@ -255,7 +253,6 @@ Feature: marche run
       faulted /do/0/check: Command failed: The command exited with code 3.
       """
 
-  @wip
   Scenario: -q prints only the workflow's output
     Given the file "hello.yaml":
       """yaml
@@ -281,7 +278,6 @@ Feature: marche run
       started /do/0/say
       """
 
-  @wip
   Scenario: --detach with --json prints the run as an object
     Given the file "nap.yaml":
       """yaml
@@ -303,7 +299,6 @@ Feature: marche run
       {"status": "running"}
       """
 
-  @wip
   Scenario: --input that isn't JSON is rejected before the run starts
     Given the file "hello.yaml":
       """yaml
@@ -328,7 +323,6 @@ Feature: marche run
       Quote the JSON for your shell, as in --input '{"name": "Ada"}'.
       """
 
-  @wip
   Scenario: --address overrides TEMPORAL_ADDRESS
     Given the file "hello.yaml":
       """yaml
@@ -353,7 +347,6 @@ Feature: marche run
       Start a server with `temporal server start-dev`, or point marche at one with --address or TEMPORAL_ADDRESS.
       """
 
-  @wip
   Scenario: TEMPORAL_NAMESPACE picks the namespace
     Given the file "hello.yaml":
       """yaml
@@ -379,7 +372,6 @@ Feature: marche run
       Create it with `temporal operator namespace create kitchen`, or choose another with --namespace or TEMPORAL_NAMESPACE.
       """
 
-  @wip
   Scenario: --namespace overrides TEMPORAL_NAMESPACE
     Given the file "hello.yaml":
       """yaml
@@ -401,7 +393,6 @@ Feature: marche run
       {"status": "completed", "output": {"name": "world"}}
       """
 
-  @wip
   Scenario: The default profile in Temporal's configuration file applies
     Given the file "hello.yaml":
       """yaml
@@ -427,7 +418,6 @@ Feature: marche run
       Temporal has no namespace kitchen.
       """
 
-  @wip
   Scenario: --profile picks a profile in Temporal's configuration file
     Given the file "hello.yaml":
       """yaml
@@ -453,7 +443,6 @@ Feature: marche run
       Temporal has no namespace pastry.
       """
 
-  @wip
   Scenario: A profile that Temporal's configuration file doesn't have is an error
     Given the file "hello.yaml":
       """yaml

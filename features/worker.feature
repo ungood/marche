@@ -5,7 +5,6 @@ Feature: marche worker
   shell activity on the task queue `marche` until it's interrupted. With `-v`,
   it prints each shell step as it starts and finishes, after the run's ID.
 
-  @wip
   Scenario: -v prints each step the worker runs
     Given a worker started with "marche worker -v"
     And the file "hello.yaml":
@@ -31,7 +30,6 @@ Feature: marche worker
       finished /do/0/say with exit code 0
       """
 
-  @wip
   Scenario: A worker that can't reach Temporal fails
     When I run "marche worker --address 127.0.0.1:1"
     Then the command fails with exit code 2
