@@ -16,10 +16,9 @@ Feature: Parallel for
   the lowest-indexed iteration that faulted. Cancelling the run cancels the
   running iterations.
 
-  `marche run` checks the extension's settings before the run starts. A
-  parallel loop can't use `while`, which depends on the iterations running in
-  order, and the tasks inside it can't use `export`, because concurrent writes
-  to the context would race.
+  `marche validate` and `marche run` check the extension's settings, and that
+  a parallel loop uses neither `while` nor `export` inside its iterations, as
+  `validate.feature` specifies.
 
   @wip
   Scenario: The output lists every iteration's output in item order
@@ -256,107 +255,3 @@ Feature: Parallel for
     And simmer should cancel
     And simmer should run 2 times
     And cook should cancel
-
-  @wip
-  Scenario: A parallel loop can't use while
-    Given the file "while.yaml":
-      """yaml
-      document:
-        dsl: '1.0.4'
-        namespace: test
-        name: parallel-while
-        version: '0.1.0'
-      do:
-        - cook:
-            for:
-              in: .dishes
-            while: ${ .ready }
-            metadata:
-              marche:
-                parallel: true
-            do:
-              - simmer:
-                  set:
-                    ready: false
-      """
-    When I run "marche run while.yaml"
-    Then the command fails
-    And the error says:
-      """
-      while.yaml isn't a valid workflow definition.
-      /do/0/cook runs its iterations in parallel, so it can't use while, which depends on them running in order.
-      """
-
-  @wip
-  Scenario: Tasks inside a parallel loop can't use export
-    Given the file "export.yaml":
-      """yaml
-      document:
-        dsl: '1.0.4'
-        namespace: test
-        name: parallel-export
-        version: '0.1.0'
-      do:
-        - cook:
-            for:
-              in: .dishes
-            metadata:
-              marche:
-                parallel: true
-            do:
-              - plate:
-                  do:
-                    - count:
-                        set:
-                          plated: true
-                        export:
-                          as: ${ $context + { plated: true } }
-      """
-    When I run "marche run export.yaml"
-    Then the command fails
-    And the error says:
-      """
-      export.yaml isn't a valid workflow definition.
-      /do/0/cook/do/0/plate/do/0/count uses export inside a parallel for, where iterations would write the context at the same time.
-      """
-
-  @wip
-  Scenario: The extension's settings are checked
-    Given the file "settings.yaml":
-      """yaml
-      document:
-        dsl: '1.0.4'
-        namespace: test
-        name: parallel-settings
-        version: '0.1.0'
-      do:
-        - cook:
-            for:
-              in: .dishes
-            metadata:
-              marche:
-                parallel: 'yes'
-                maxConcurrency: 0
-                cancelOnFailure: true
-                retries: 3
-            do:
-              - simmer:
-                  set:
-                    ready: true
-        - plate:
-            set:
-              plated: true
-            metadata:
-              marche:
-                parallel: true
-      """
-    When I run "marche run settings.yaml"
-    Then the command fails
-    And the error says:
-      """
-      settings.yaml isn't a valid workflow definition.
-      /do/0/cook has metadata.marche.parallel: "yes", but it must be true or false.
-      /do/0/cook has metadata.marche.maxConcurrency: 0, but it must be a positive integer.
-      /do/0/cook has metadata.marche.retries, which isn't a marche setting. The settings are parallel, maxConcurrency and cancelOnFailure.
-      /do/1/plate has metadata.marche, but only for tasks take marche's settings.
-      """

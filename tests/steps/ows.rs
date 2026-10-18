@@ -28,6 +28,7 @@ const SUPPORTED: &[&str] = &[
     "try",
     "wait",
     "fork",
+    "for",
 ];
 
 /// `do` comes last, because `for` tasks have a `do` too.

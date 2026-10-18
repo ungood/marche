@@ -17,7 +17,6 @@ Feature: For
   `/do/0/loop/do/0/plate`, so `marche show` lists them once per iteration, in
   the order they started.
 
-  @wip
   Scenario: Each iteration's output is the next one's input
     Given a workflow with definition:
       """yaml
@@ -35,7 +34,7 @@ Feature: For
             do:
               - plate:
                   set:
-                    served: ${ .served + [ { dish: $dish, course: $course } ] }
+                    served: '${ .served + [ { dish: $dish, course: $course } ] }'
       """
     And given the workflow input is:
       """yaml
@@ -55,7 +54,6 @@ Feature: For
       """
     And plate should run 3 times
 
-  @wip
   Scenario: while stops the loop
     Given a workflow with definition:
       """yaml
@@ -87,7 +85,6 @@ Feature: For
       """
     And add should run 2 times
 
-  @wip
   Scenario: A loop with no items passes its input on
     Given a workflow with definition:
       """yaml
@@ -115,7 +112,6 @@ Feature: For
       dishes: []
       """
 
-  @wip
   Scenario: A collection that isn't an array faults the task
     Given a workflow with definition:
       """yaml
@@ -146,7 +142,6 @@ Feature: For
       instance: /do/0/serve
       """
 
-  @wip
   Scenario: A failing iteration faults the loop
     Given a workflow with definition:
       """yaml

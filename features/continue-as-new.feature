@@ -30,7 +30,7 @@ Feature: Continuing as new
               served: []
               dishes: [ soup, fish, cake, bread, salad, pie ]
             export:
-              as: ${ { plated: 0 } }
+              as: '${ { plated: 0 } }'
         - service:
             do:
               - serve:
@@ -42,7 +42,7 @@ Feature: Continuing as new
                         set:
                           served: ${ .served + [ $dish ] }
                         export:
-                          as: ${ { plated: ($context.plated + 1) } }
+                          as: '${ { plated: ($context.plated + 1) } }'
         - finish:
             set:
               served: ${ .served }

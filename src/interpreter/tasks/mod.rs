@@ -3,6 +3,7 @@
 //! `SUPPORTED` in `tests/steps/ows.rs`.
 
 mod do_list;
+mod for_each;
 mod fork;
 mod raise;
 mod run;
@@ -34,6 +35,8 @@ pub async fn execute<H: Host>(
         try_catch::execute(interpreter, task).await
     } else if definition.get("wait").is_some() {
         wait::execute(interpreter, task).await
+    } else if definition.get("for").is_some() {
+        for_each::execute(interpreter, task).await
     } else if definition.get("do").is_some() {
         // Checked last, because other task types, such as `for`, have a `do` too.
         do_list::execute(interpreter, task).await

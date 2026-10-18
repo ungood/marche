@@ -22,7 +22,9 @@ static SCHEMA: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
 });
 
 /// Task types the interpreter runs. `run` is checked by process.
-const SUPPORTED_TASKS: &[&str] = &["do", "set", "run", "switch", "raise", "try", "wait", "fork"];
+const SUPPORTED_TASKS: &[&str] = &[
+    "do", "set", "run", "switch", "raise", "try", "wait", "fork", "for",
+];
 /// `do` comes last, because `for` tasks have a `do` too.
 const TASK_TYPES: &[&str] = &[
     "call", "emit", "for", "fork", "listen", "raise", "run", "set", "switch", "try", "wait", "do",
